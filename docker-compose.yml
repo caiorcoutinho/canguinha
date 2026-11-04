@@ -1,0 +1,42 @@
+name: canguinha
+
+services:
+  app:
+    build: .
+    env_file: .env                     # credenciais Pluggy (PLUGGY_CLIENT_ID, PLUGGY_CLIENT_SECRET, PLUGGY_ITEM_IDS)
+    environment:
+      PORT: 3000                       # porta interna; sobrescreve a do .env
+      HOST: 0.0.0.0
+      DATABASE_URL: postgres://canguinha:${POSTGRES_PASSWORD:-canguinha}@db:5432/canguinha
+    ports:
+      - "${APP_PORT:-3010}:3000"
+    volumes:
+      - ./data:/app/data:ro            # só lido na 1ª subida, para importar metas/conexões dos JSON antigos
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: canguinha
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-canguinha}
+      POSTGRES_DB: canguinha
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U canguinha -d canguinha"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:

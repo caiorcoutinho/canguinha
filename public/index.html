@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Canguinha</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦘</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">🦘</span> Canguinha <span class="sub">finanças pessoais</span></div>
+    <div class="top-actions">
+      <span id="updated" class="muted small"></span>
+      <button id="btn-people" class="btn ghost">Pessoas</button>
+      <button id="btn-categories" class="btn ghost">Categorias</button>
+      <button id="btn-connections" class="btn ghost">Conexões</button>
+      <button id="btn-refresh" class="btn">Atualizar</button>
+      <button id="btn-theme" class="btn ghost icon" title="Alternar tema" aria-label="Alternar tema">◐</button>
+      <span id="user-box" class="user-box" hidden>
+        <img id="user-pic" alt="" referrerpolicy="no-referrer">
+        <span id="user-email" class="small"></span>
+        <button id="btn-logout" class="btn ghost">Sair</button>
+      </span>
+    </div>
+  </header>
+
+  <div id="demo-banner" class="banner" hidden>
+    Modo demonstração — dados fictícios. Configure <code>PLUGGY_CLIENT_ID</code>, <code>PLUGGY_CLIENT_SECRET</code> e <code>PLUGGY_ITEM_IDS</code> no <code>.env</code> para ver seus dados reais.
+  </div>
+  <div id="error-banner" class="banner error" hidden></div>
+  <div id="bill-alert" class="banner info" hidden></div>
+
+  <main>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-view="overview" aria-selected="true">Visão geral</button>
+      <button role="tab" data-view="bills" aria-selected="false">Faturas</button>
+    </nav>
+
+    <div id="view-overview" class="view">
+    <section class="filters" aria-label="Filtros">
+      <div class="seg" id="period-presets" role="group" aria-label="Período">
+        <button data-preset="month" class="active">Este mês</button>
+        <button data-preset="lastmonth">Mês passado</button>
+        <button data-preset="30">30 dias</button>
+        <button data-preset="90">90 dias</button>
+        <button data-preset="year">Este ano</button>
+        <button data-preset="custom">Personalizado</button>
+      </div>
+      <div class="custom-range" id="custom-range" hidden>
+        <label>De <input type="date" id="from"></label>
+        <label>Até <input type="date" id="to"></label>
+      </div>
+      <label class="toggle" title="Remove pagamentos de fatura e transferências entre suas próprias contas para não contar o mesmo gasto duas vezes">
+        <input type="checkbox" id="exclude-internal" checked> Ignorar transferências internas e pagamento de fatura
+      </label>
+      <label class="toggle" title="Nas despesas divididas com outras pessoas, entra nos totais e gráficos só a parte que é sua">
+        <input type="checkbox" id="my-share" checked> Contar só a minha parte das despesas divididas
+      </label>
+    </section>
+
+    <section class="kpis" id="kpis" aria-label="Resumo"></section>
+
+    <section>
+      <div class="section-head">
+        <h2>Contas e cartões</h2>
+        <span class="muted small">Clique para filtrar · <a href="#" id="select-all">mostrar todas</a></span>
+      </div>
+      <div class="accounts" id="accounts"></div>
+    </section>
+
+    <section class="grid-charts">
+      <div class="panel wide">
+        <div class="panel-head">
+          <h3>Entradas e saídas</h3>
+          <div class="legend" id="flow-legend">
+            <span><i class="sw" style="background:var(--series-1)"></i>Entradas</span>
+            <span><i class="sw" style="background:var(--series-2)"></i>Saídas</span>
+          </div>
+        </div>
+        <div class="chart-box"><canvas id="chart-flow" role="img" aria-label="Entradas e saídas por período"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Gastos por categoria</h3></div>
+        <div class="chart-box tall"><canvas id="chart-cat" role="img" aria-label="Gastos por categoria"></canvas></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Gastos por conta / cartão</h3></div>
+        <div class="chart-box tall"><canvas id="chart-acc" role="img" aria-label="Gastos por conta ou cartão"></canvas></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h3>Transações <span class="muted small" id="tx-count"></span></h3>
+        <div class="tx-tools">
+          <input type="search" id="search" placeholder="Buscar descrição…">
+          <select id="cat-filter"><option value="">Todas as categorias</option></select>
+          <select id="dir-filter">
+            <option value="">Entradas e saídas</option>
+            <option value="in">Só entradas</option>
+            <option value="out">Só saídas</option>
+          </select>
+          <button class="btn ghost" id="btn-csv">Exportar CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="tx">
+          <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th class="num">Valor</th></tr></thead>
+          <tbody id="tx-body"></tbody>
+          <tfoot><tr><td colspan="4">Total filtrado</td><td class="num" id="tx-total"></td></tr></tfoot>
+        </table>
+      </div>
+      <div class="more"><button class="btn ghost" id="btn-more" hidden>Mostrar mais</button></div>
+    </section>
+    </div>
+
+    <div id="view-bills" class="view" hidden>
+      <section class="filters"><div class="seg" id="card-select" role="group" aria-label="Cartão"></div></section>
+      <section class="kpis" id="bill-kpis"></section>
+      <section class="grid-charts goal-grid">
+        <div class="panel" id="goal-panel">
+          <div class="panel-head">
+            <h3>Meta semanal</h3>
+            <button class="btn ghost" id="btn-goal-edit" type="button" hidden>Editar meta</button>
+          </div>
+          <form id="goal-form" class="goal-form" hidden>
+            <label for="goal-input">Quanto quer gastar por semana neste cartão?</label>
+            <div class="goal-row">
+              <span class="prefix">R$</span>
+              <input id="goal-input" type="number" min="1" step="0.01" inputmode="decimal" placeholder="500,00" required>
+              <button class="btn" type="submit">Salvar</button>
+              <button class="btn ghost" type="button" id="btn-goal-cancel">Cancelar</button>
+              <button class="btn ghost" type="button" id="btn-goal-remove" hidden>Remover meta</button>
+            </div>
+            <p class="muted small" id="goal-hint"></p>
+          </form>
+          <div id="goal-body"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Gastos por semana</h3>
+            <div class="legend">
+              <span><i class="sw" style="background:var(--series-2)"></i>Gasto na semana</span>
+              <span><i class="sw sw-line"></i>Meta</span>
+            </div>
+          </div>
+          <div class="chart-box"><canvas id="chart-weeks" role="img" aria-label="Gastos do cartão por semana comparados à meta"></canvas></div>
+        </div>
+      </section>
+      <section class="grid-charts goal-grid">
+        <div class="panel" id="mgoal-panel">
+          <div class="panel-head">
+            <h3>Meta mensal</h3>
+            <button class="btn ghost" id="btn-mgoal-edit" type="button" hidden>Editar meta</button>
+          </div>
+          <form id="mgoal-form" class="goal-form" hidden>
+            <label for="mgoal-input">Quanto quer gastar por fatura (ciclo de fechamento a fechamento)?</label>
+            <div class="goal-row">
+              <span class="prefix">R$</span>
+              <input id="mgoal-input" type="number" min="1" step="0.01" inputmode="decimal" required>
+              <button class="btn" type="submit">Salvar</button>
+              <button class="btn ghost" type="button" id="btn-mgoal-cancel">Cancelar</button>
+              <button class="btn ghost" type="button" id="btn-mgoal-remove" hidden>Remover meta</button>
+            </div>
+            <p class="muted small" id="mgoal-hint"></p>
+          </form>
+          <div id="mgoal-body"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h3 id="mburn-title">Gasto acumulado no ciclo</h3>
+            <div class="legend">
+              <span><i class="sw" style="background:var(--series-2)"></i>Gasto acumulado</span>
+              <span><i class="sw sw-line"></i>Ritmo da meta</span>
+            </div>
+          </div>
+          <div class="chart-box"><canvas id="chart-mburn" role="img" aria-label="Gasto acumulado no período comparado ao ritmo da meta mensal"></canvas></div>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-head">
+          <h3>Histórico de faturas</h3>
+          <div class="legend">
+            <span><i class="sw" style="background:var(--series-2)"></i>Fechada</span>
+            <span><i class="sw sw-open"></i>Aberta (parcial)</span>
+          </div>
+        </div>
+        <div class="chart-box"><canvas id="chart-bills" role="img" aria-label="Valor total das faturas por mês de vencimento"></canvas></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h3>Faturas</h3><span class="muted small">Clique numa fatura para ver os lançamentos</span></div>
+        <div class="table-wrap">
+          <table class="tx bills">
+            <thead><tr><th>Vencimento</th><th>Fechamento</th><th>Situação</th><th class="num">Lançamentos</th><th class="num">Mínimo</th><th class="num">Total</th></tr></thead>
+            <tbody id="bills-body"></tbody>
+          </table>
+        </div>
+      </section>
+      <section class="grid-charts" id="bill-detail" hidden>
+        <div class="panel">
+          <div class="panel-head"><h3 id="bill-detail-title">Lançamentos</h3><span class="muted small" id="bill-detail-sub"></span></div>
+          <div class="table-wrap">
+            <table class="tx">
+              <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
+              <tbody id="bill-tx-body"></tbody>
+              <tfoot><tr><td colspan="3">Soma dos lançamentos</td><td class="num" id="bill-tx-total"></td></tr></tfoot>
+            </table>
+          </div>
+          <p class="muted small" id="bill-tx-note"></p>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Gastos da fatura por categoria</h3></div>
+          <div class="chart-box tall"><canvas id="chart-bill-cat" role="img" aria-label="Gastos da fatura por categoria"></canvas></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <dialog id="dlg-connections">
+    <form method="dialog" class="dlg">
+      <h3>Conexões Pluggy</h3>
+      <p class="muted small">Cada conexão é um <em>item</em> da Pluggy (ex.: o item criado pelo MeuPluggy). Itens definidos em <code>PLUGGY_ITEM_IDS</code> no <code>.env</code> não podem ser removidos por aqui.</p>
+      <ul id="items-list" class="items"></ul>
+      <div class="add-item">
+        <input id="new-item" placeholder="ID do item (uuid)" autocomplete="off">
+        <button class="btn" id="btn-add-item" type="button">Adicionar</button>
+      </div>
+      <p id="item-msg" class="small"></p>
+      <div id="history-box" class="history" hidden>
+        <h3>Histórico salvo</h3>
+        <p class="muted small" id="history-sub"></p>
+        <table class="tx"><thead><tr><th>Conta</th><th class="num">Transações</th><th>Período</th><th class="num">Faturas</th></tr></thead><tbody id="history-body"></tbody></table>
+        <div class="add-item"><button class="btn ghost" type="button" id="btn-sync-history">Sincronizar histórico agora</button></div>
+        <p class="small" id="history-msg"></p>
+      </div>
+      <div id="webhook-box" class="history" hidden>
+        <h3>Webhooks</h3>
+        <p class="small" id="webhook-sub"></p>
+        <ul class="items" id="webhook-events"></ul>
+      </div>
+      <div class="dlg-foot"><button class="btn ghost">Fechar</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-category">
+    <form class="dlg" id="cat-form">
+      <h3>Categoria do lançamento</h3>
+      <p class="small" id="cat-tx"></p>
+      <label class="field" for="cat-select">Categoria</label>
+      <select id="cat-select"></select>
+      <div class="add-item">
+        <input id="cat-new" placeholder="ou crie uma nova categoria…" maxlength="40" autocomplete="off">
+        <button class="btn ghost" type="button" id="btn-cat-create">Criar</button>
+      </div>
+      <label class="toggle"><input type="checkbox" id="cat-similar"> <span id="cat-similar-label">Aplicar a todas com esta descrição</span></label>
+      <p class="muted small" id="cat-hint"></p>
+      <p class="small neg" id="cat-msg"></p>
+      <div class="dlg-foot">
+        <button class="btn ghost" type="button" id="btn-cat-reset" hidden>Voltar à categoria original</button>
+        <button class="btn ghost" type="button" id="btn-cat-cancel">Cancelar</button>
+        <button class="btn" type="submit">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-share">
+    <form class="dlg" id="share-form">
+      <h3>Dividir despesa</h3>
+      <p class="small" id="share-tx"></p>
+      <div id="share-rows" class="share-rows"></div>
+      <div class="share-tools">
+        <button class="btn ghost" type="button" id="btn-share-add">+ Pessoa</button>
+        <button class="btn ghost" type="button" id="btn-share-equal" title="Divide o valor igualmente entre você e as pessoas">Dividir igualmente comigo</button>
+        <button class="btn ghost" type="button" id="btn-share-all" title="A despesa inteira é das pessoas; você não paga nada">Toda delas</button>
+      </div>
+      <p class="share-mine" id="share-mine"></p>
+      <label class="toggle" id="share-scope-box"><input type="checkbox" id="share-scope" checked> <span id="share-scope-label"></span></label>
+      <p class="small neg" id="share-msg"></p>
+      <div class="dlg-foot">
+        <button class="btn ghost" type="button" id="btn-share-remove" hidden>Remover divisão</button>
+        <button class="btn ghost" type="button" id="btn-share-cancel">Cancelar</button>
+        <button class="btn" type="submit">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-people" class="wide">
+    <form method="dialog" class="dlg">
+      <h3>Pessoas</h3>
+      <p class="muted small">Quem passa despesas no seu cartão ou conta. O saldo é quanto cada pessoa te deve: a parte dela nas despesas divididas menos os pagamentos que você registrou. Para dividir, clique em <strong>+ dividir</strong> ao lado de uma despesa.</p>
+      <ul id="people-list" class="items"></ul>
+      <div class="add-item">
+        <input id="people-new" placeholder="Nome da pessoa" maxlength="40" autocomplete="off">
+        <button class="btn" id="btn-people-add" type="button">Adicionar</button>
+      </div>
+      <p class="small neg" id="people-msg"></p>
+      <div id="person-detail" class="history" hidden>
+        <h3 id="pd-title"></h3>
+        <div class="add-item pay-form">
+          <span class="prefix">R$</span>
+          <input id="pay-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="Valor recebido">
+          <input id="pay-date" type="date">
+          <input id="pay-note" placeholder="Observação (opcional)" maxlength="120">
+          <button class="btn" type="button" id="btn-pay-add">Registrar pagamento</button>
+        </div>
+        <div class="table-wrap">
+          <table class="tx">
+            <thead><tr><th>Data</th><th>Descrição</th><th class="num">Despesa</th><th class="num">Parte dela</th></tr></thead>
+            <tbody id="pd-items"></tbody>
+          </table>
+        </div>
+        <h3>Pagamentos recebidos</h3>
+        <ul id="pd-payments" class="items"></ul>
+      </div>
+      <div class="dlg-foot"><button class="btn ghost">Fechar</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-categories">
+    <form method="dialog" class="dlg">
+      <h3>Minhas categorias</h3>
+      <p class="muted small">Crie categorias suas e atribua-as clicando na categoria de qualquer lançamento.</p>
+      <ul id="cats-list" class="items"></ul>
+      <div class="add-item">
+        <input id="cats-new" placeholder="Nome da nova categoria" maxlength="40" autocomplete="off">
+        <button class="btn" id="btn-cats-add" type="button">Adicionar</button>
+      </div>
+      <p class="small neg" id="cats-msg"></p>
+      <div class="history">
+        <h3>Regras automáticas</h3>
+        <p class="muted small">Lançamentos com estas descrições (inclusive os futuros) recebem a categoria indicada.</p>
+        <ul id="rules-list" class="items"></ul>
+      </div>
+      <div class="dlg-foot"><button class="btn ghost">Fechar</button></div>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
