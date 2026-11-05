@@ -321,7 +321,8 @@ function upcomingInstallments(tx, bills) {
 }
 
 // ---------------------------------------------------------------- categorias personalizadas
-// Ordem: escolha manual na transação > regra pela descrição > categoria da Pluggy.
+// Ordem: escolha manual na transação > escolha para a compra parcelada (todas as parcelas, inclusive as previstas)
+// > regra pela descrição > categoria da Pluggy.
 // Nada é gravado sobre o dado da Pluggy; a troca acontece na leitura (e não altera os objetos em cache).
 // chave da regra: descrição sem datas, horários, parcelas e números longos ("PIX - ENVIADO 04/11 09:48 FULANO" → "pix - enviado fulano")
 const ruleKey = (d) => String(d || '').toLowerCase()
@@ -340,8 +341,9 @@ async function annotator() {
   return (t) => {
     let out = t;
     const manual = t.id ? overrides[t.id] : undefined;
-    const cat = manual ?? byRule.get(ruleKey(t.description));
-    if (cat != null) out = { ...out, category: cat, pluggyCategory: t.category, categorySource: manual != null ? 'manual' : 'rule' };
+    const purchase = manual == null && t.purchaseKey ? overrides[`purchase:${t.purchaseKey}`] : undefined;
+    const cat = manual ?? purchase ?? byRule.get(ruleKey(t.description));
+    if (cat != null) out = { ...out, category: cat, pluggyCategory: t.category, categorySource: manual != null ? 'manual' : purchase != null ? 'purchase' : 'rule' };
     if (t.direction !== 'out') return out;
     const own = t.id ? byTarget.get(`tx:${t.id}`) : null;
     const list = own || (t.purchaseKey ? byTarget.get(`purchase:${t.purchaseKey}`) : null);
@@ -717,8 +719,9 @@ async function handleApi(req, res, url) {
     if (!(await store.deleteCategory(cm[1]))) throw new HttpError(404, 'Categoria não encontrada');
     return send(res, 200, { ok: true });
   }
-  // { category: "custom:<id>" | categoria da Pluggy | null, similar?: bool, description? }
+  // { category: "custom:<id>" | categoria da Pluggy | null, similar?: bool, description?, scope?: 'tx' | 'purchase' }
   // similar = vale para todas as transações com a mesma descrição, inclusive as que ainda vão chegar.
+  // scope 'purchase' = vale para todas as parcelas da compra (lançadas e previstas); o id é de uma parcela lançada.
   const tc = url.pathname.match(/^\/api\/transactions\/([A-Za-z0-9_-]{1,100})\/category$/);
   if (tc && req.method === 'PUT') {
     const body = await readBody(req);
@@ -732,6 +735,12 @@ async function handleApi(req, res, url) {
       if (!match) throw new HttpError(400, 'Descrição obrigatória para aplicar às semelhantes');
       await store.setRule(match, category);
       await store.setTxCategory(tc[1], null); // esta passa a seguir a regra
+    } else if (body.scope === 'purchase') {
+      const t = (await allTransactions()).find((x) => x.id === tc[1]);
+      if (!t) throw new HttpError(404, 'Transação não encontrada');
+      if (!t.purchaseKey) throw new HttpError(400, 'Não é uma compra parcelada');
+      await store.setTxCategory(`purchase:${t.purchaseKey}`, category);
+      await store.setTxCategory(t.id, null); // a parcela passa a seguir a compra
     } else {
       await store.setTxCategory(tc[1], category);
     }

@@ -20,10 +20,11 @@ const ruleKey = (d) => String(d || '').toLowerCase()
   .replace(/\bparc(ela)?\b\.?/g, ' ')
   .replace(/\s+/g, ' ').trim();  // igual ao server.js
 // chip clicável que abre o seletor de categoria do lançamento
-function catChip(t) {
-  const src = t.categorySource === 'manual' ? 'escolhida por você' : t.categorySource === 'rule' ? 'por regra' : 'da Pluggy';
+// attr: data-cat-tx (lançamento) ou data-cat-up (parcela prevista, pelo id da parcela que a originou)
+function catChip(t, attr = 'data-cat-tx') {
+  const src = { manual: 'escolhida por você', purchase: 'escolhida para todas as parcelas da compra', rule: 'por regra' }[t.categorySource] || 'da Pluggy';
   const orig = t.categorySource ? ` · original: ${catName(t.pluggyCategory)}` : '';
-  return `<button type="button" class="chip${isCustom(t.category) ? ' custom' : ''}" data-cat-tx="${esc(t.id)}" title="Categoria ${src}${esc(orig)} — clique para alterar">${esc(catName(t.category))}${t.categorySource ? ' ✎' : ''}</button>`;
+  return `<button type="button" class="chip${isCustom(t.category) ? ' custom' : ''}" ${attr}="${esc(t.id)}" title="Categoria ${src}${esc(orig)} — clique para alterar">${esc(catName(t.category))}${t.categorySource ? ' ✎' : ''}</button>`;
 }
 const { INTERNAL } = G;
 
@@ -524,7 +525,7 @@ async function loadBillDetail() {
     $('#bill-tx-body').insertAdjacentHTML('afterbegin', up.map((u) => `<tr class="predicted">
       <td class="date">prevista</td>
       <td class="desc">${esc(u.description)} <span class="chip">${u.installment}</span>${shareChip(upTx(u), 'data-share-up')}<small>compra em ${u.purchaseDate ? brDate(u.purchaseDate) : '—'}</small></td>
-      <td><span class="chip">${esc(catName(u.category))}</span></td>
+      <td>${catChip(upTx(u), 'data-cat-up')}</td>
       <td class="num">${fmt(u.amount)}</td></tr>`).join(''));
   }
   $('#bill-tx-total').textContent = up.length ? `${fmt(sum)} + ${fmt(up.reduce((s, u) => s + u.amount, 0))} previstas` : fmt(sum);
@@ -899,11 +900,12 @@ function categoryOptions(selected) {
   return (custom.length ? `<optgroup label="Minhas categorias">${custom.map(opt).join('')}</optgroup>` : '') +
     `<optgroup label="Categorias da Pluggy">${[...pluggy].sort(byName).map(opt).join('')}</optgroup>`;
 }
-function openCategoryDialog(id) {
-  const t = findTx(id);
+function openCategoryDialog(id, predicted = false) {
+  const u = predicted && (state.billUp || []).find((x) => x.sourceId === id);
+  const t = u ? upTx(u) : findTx(id);
   if (!t) return;
   catDlg.tx = t;
-  $('#cat-tx').innerHTML = `<strong>${esc(t.description)}</strong> · ${brDate(t.date)} · ${t.direction === 'in' ? '+' : '−'}${fmt(t.amount)}`;
+  $('#cat-tx').innerHTML = `<strong>${esc(t.description)}</strong> · ${t.predicted ? 'parcela prevista' : brDate(t.date)} · ${t.direction === 'in' ? '+' : '−'}${fmt(t.amount)}${t.installment ? ` · parcela ${t.installment}` : ''}`;
   $('#cat-select').innerHTML = categoryOptions(t.category);
   $('#cat-new').value = ''; $('#cat-msg').textContent = '';
   const key = ruleKey(t.description);
@@ -911,16 +913,21 @@ function openCategoryDialog(id) {
   $('#cat-similar').checked = t.categorySource === 'rule';
   $('#cat-similar').disabled = !key;
   $('#cat-similar-label').textContent = `Aplicar a todas com a descrição “${key}”, inclusive as futuras`;
+  // compra parcelada: a escolha pode valer para todas as parcelas; na prevista é sempre assim (ela não tem lançamento próprio)
+  $('#cat-purchase-box').hidden = !t.purchaseKey;
+  $('#cat-purchase').checked = !!t.predicted || t.categorySource === 'purchase';
+  $('#cat-purchase').disabled = !!t.predicted;
+  $('#cat-purchase-label').textContent = `Aplicar a todas as parcelas desta compra${t.installment ? ` (${t.installment.split('/')[1]}x)` : ''}, inclusive as previstas`;
   $('#cat-hint').textContent = rule ? `Já existe uma regra para essa descrição → ${catName(rule.category)}.` : '';
   $('#btn-cat-reset').hidden = !t.categorySource;
   $('#btn-cat-reset').textContent = `Voltar à categoria da Pluggy (${catName(t.pluggyCategory ?? t.category)})`;
   $('#dlg-category').showModal();
 }
-async function saveTxCategory(category, similar) {
+async function saveTxCategory(category, similar, purchase = false) {
   const t = catDlg.tx;
   await api(`/api/transactions/${encodeURIComponent(t.id)}/category`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ category, similar, description: t.description }),
+    body: JSON.stringify({ category, similar, description: t.description, scope: purchase && t.purchaseKey ? 'purchase' : 'tx' }),
   });
   $('#dlg-category').close();
   await refreshData();
@@ -933,6 +940,8 @@ async function createCategory(name) {
 document.addEventListener('click', (e) => {
   const id = e.target.closest('[data-cat-tx]')?.dataset.catTx;
   if (id) openCategoryDialog(id);
+  const up = e.target.closest('[data-cat-up]')?.dataset.catUp;
+  if (up) openCategoryDialog(up, true);
 });
 $('#btn-cat-create').addEventListener('click', async () => {
   const name = $('#cat-new').value.trim();
@@ -949,14 +958,15 @@ $('#cat-form').addEventListener('submit', async (e) => {
   const t = catDlg.tx;
   const cat = $('#cat-select').value;
   const similar = $('#cat-similar').checked;
+  const purchase = !$('#cat-purchase-box').hidden && $('#cat-purchase').checked;
   // escolher de volta a própria categoria da Pluggy, sem regra, só remove a escolha manual
   const category = !similar && cat === (t.pluggyCategory ?? t.category) && t.categorySource !== 'rule' ? null : cat;
-  try { await saveTxCategory(category, similar); } catch (err) { $('#cat-msg').textContent = err.message; }
+  try { await saveTxCategory(category, similar, purchase); } catch (err) { $('#cat-msg').textContent = err.message; }
 });
 $('#btn-cat-reset').addEventListener('click', async () => {
   const t = catDlg.tx;
-  // regra: remove a regra da descrição; manual: remove só a escolha desta transação
-  try { await saveTxCategory(null, t.categorySource === 'rule'); } catch (err) { $('#cat-msg').textContent = err.message; }
+  // regra: remove a regra da descrição; compra: remove a escolha da compra; manual: remove só a escolha desta transação
+  try { await saveTxCategory(null, t.categorySource === 'rule', t.categorySource === 'purchase'); } catch (err) { $('#cat-msg').textContent = err.message; }
 });
 $('#btn-cat-cancel').addEventListener('click', () => $('#dlg-category').close());
 
@@ -1027,6 +1037,7 @@ function updateShareMine() {
 }
 // parcela prevista vista como despesa: dividi-la é dividir a compra (todas as parcelas)
 const upTx = (u) => ({ id: u.sourceId, date: null, description: u.description, amount: u.amount, installment: u.installment, purchaseKey: u.purchaseKey,
+  category: u.category, pluggyCategory: u.pluggyCategory, categorySource: u.categorySource,
   shares: u.shares, shareScope: u.shares ? 'purchase' : undefined, myAmount: u.myAmount, direction: 'out', predicted: true });
 function openShareDialog(id, predicted = false) {
   const u = predicted && (state.billUp || []).find((x) => x.sourceId === id);
