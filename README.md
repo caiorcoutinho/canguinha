@@ -88,6 +88,43 @@ no topo do dashboard. Sem `PUBLIC_URL`, continua só a sincronização periódic
 
 O proxy HTTPS precisa encaminhar `POST /webhooks/pluggy/*` para o app (porta 3000 do container).
 
+## Bot do Telegram
+
+Comandos para consultar as faturas e metas pelo Telegram (mesmos cálculos do dashboard):
+
+| Comando | Resposta |
+|---|---|
+| `/diaria` | gasto de hoje e quanto ainda pode gastar hoje pelas metas mensal e semanal |
+| `/semana` | meta semanal: gasto, quanto resta, quanto pode gastar por dia até domingo |
+| `/mes` | meta mensal no ciclo da fatura: gasto (com parcelas previstas), por dia/semana, projeção |
+| `/fatura` | fatura aberta, última fechada (vencimento, mínimo), limite, categorias e últimos lançamentos |
+| `/saldo` | saldo das contas e limite usado dos cartões |
+
+Para um cartão só, escreva parte do nome: `/fatura elo`.
+
+1. No Telegram, fale com o [@BotFather](https://t.me/BotFather), mande `/newbot` e copie o token.
+2. No `.env`: `TELEGRAM_BOT_TOKEN=<token>` e reinicie o app.
+3. Mande `/start` para o seu bot: como o chat ainda não está autorizado, ele responde com o seu chat id.
+4. No `.env`: `TELEGRAM_ALLOWED_CHAT_IDS=<chat id>` e reinicie. Outros chats só recebem a mensagem de não autorizado.
+
+### Categorizar despesas novas pelo Telegram
+
+Com o bot configurado e Postgres, cada **despesa nova** cuja descrição ainda não tem regra nem categoria escolhida
+gera uma mensagem com botões: **✅ Manter** a categoria da Pluggy, escolher outra (atalhos, **Mais categorias…**) ou
+**➕ Nova categoria** (responda com o nome). A escolha vira uma **regra pela descrição**, a mesma de "aplicar a todas
+com esta descrição" no app: as próximas despesas com essa descrição já chegam categorizadas e não perguntam de novo.
+
+- Uma pergunta por descrição: se a mesma chegar de novo antes da resposta, não repete.
+- Só despesas dos últimos 7 dias, até 10 perguntas por vez; pagamento de fatura, transferências entre contas
+  próprias e créditos ficam de fora. A primeira importação de uma conta não gera perguntas.
+- Com webhooks (`PUBLIC_URL`), o aviso `transactions/created` sincroniza na hora só os últimos 7 dias da conta,
+  e a pergunta chega em segundos. Sem webhooks, chega na próxima sincronização.
+- Para trocar depois, apague ou mude a regra em **Categorias** no app. `TELEGRAM_CATEGORIZE=0` desliga as perguntas.
+
+O bot usa long polling (`getUpdates`): não precisa de URL pública nem de porta aberta, funciona também no WSL.
+Cada token só pode ser usado por uma instância: use um bot para desenvolvimento e outro para produção (com o mesmo
+token, o log mostra `409 Conflict`).
+
 ## Rodar sem Docker
 
 Requer Node 22+. Sem `DATABASE_URL`, os dados ficam em arquivos JSON em `data/`.

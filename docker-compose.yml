@@ -7,7 +7,9 @@ services:
     environment:
       PORT: 3000                       # porta interna; sobrescreve a do .env
       HOST: 0.0.0.0
-      DATABASE_URL: postgres://canguinha:${POSTGRES_PASSWORD:-canguinha}@db:5432/canguinha
+      # senha fora da URL: caracteres como @ # / : ? % na senha quebrariam a URL
+      DATABASE_URL: postgres://canguinha@db:5432/canguinha
+      PGPASSWORD: ${POSTGRES_PASSWORD:-canguinha}
     ports:
       - "${APP_PORT:-3010}:3000"
     volumes:

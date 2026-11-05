@@ -9,6 +9,9 @@ import crypto from 'node:crypto';
 import { demoAccounts, demoTransactions, demoBills } from './lib/demo.js';
 import { createStore, DuplicateError } from './lib/store.js';
 import { createAuth } from './lib/auth.js';
+import { startTelegramBot } from './lib/telegram.js';
+import { botCommands } from './lib/bot.js';
+import { createCategorizer } from './lib/categorizer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -414,8 +417,19 @@ function txRow(t, acc) {
   };
 }
 
-function persistTx(acc, raw, scope) {
-  return store.saveTransactions(acc.id, raw.map((t) => txRow(t, acc)), scope);
+// Despesas novas sem categoria → pergunta no Telegram (ver lib/categorizer.js)
+let categorizer = null;
+
+async function persistTx(acc, raw, scope) {
+  const r = await store.saveTransactions(acc.id, raw.map((t) => txRow(t, acc)), scope);
+  // Tudo novo num lote grande = primeira importação da conta: não pergunta pelo histórico.
+  const firstImport = r.fetched > 20 && r.inserted === r.fetched;
+  if (categorizer && r.insertedIds?.length && !firstImport) {
+    const ids = new Set(r.insertedIds);
+    const fresh = raw.filter((t) => ids.has(t.id)).map((t) => ({ ...normalizeTransaction(t, acc), accountName: acc.name }));
+    categorizer.onNewTransactions(fresh).catch((err) => console.error('[categorizar]', err.message));
+  }
+  return r;
 }
 
 // Busca na Pluggy (com cache), grava no banco e lê do banco. Sem Postgres, devolve o que veio da Pluggy.
@@ -567,7 +581,21 @@ async function handleWebhook(req, res, url) {
   console.log(`[webhook] ${event}${body.itemId ? ' item ' + body.itemId : ''}`);
   store.logWebhook({ event, itemId: body.itemId, accountId: body.accountId, payload: body }).catch((err) => console.error('[webhook log]', err.message));
   cache.clear(); // status do item e contas são relidos na próxima consulta
+  if (event === 'transactions/created') quickSync(body).catch((err) => console.error('[webhook sync rápida]', err.message));
   if (event.startsWith('transactions/') || event === 'item/updated' || event === 'item/login_succeeded') scheduleSync(event);
+}
+
+// Sincronização rápida ao aviso de transações novas: só os últimos dias da conta (ou do item) avisado,
+// para a pergunta de categoria chegar em segundos. A sincronização completa vem depois, pelo scheduleSync.
+async function quickSync(body) {
+  if (!HISTORY || (!body.accountId && !body.itemId)) return;
+  const accounts = (await listAccounts(true)).filter((a) => (body.accountId ? a.id === body.accountId : a.itemId === body.itemId));
+  const to = todayIso(), from = shiftDate(to, -7);
+  for (const acc of accounts) {
+    const r = await persistTx(acc, await fetchAllTransactions(acc.id, from, to), { from, to });
+    console.log(`[webhook sync rápida] ${acc.name}: ${r.inserted} nova(s)`);
+  }
+  cache.clear();
 }
 
 // ---------------------------------------------------------------- http
@@ -828,6 +856,29 @@ const server = http.createServer(async (req, res) => {
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => server.close(() => store.close().finally(() => process.exit(0))));
 
 setupWebhooks();
+
+// Bot do Telegram (opcional): comandos /diaria, /semana, /mes, /fatura, /saldo. Só responde aos chats autorizados.
+if (process.env.TELEGRAM_BOT_TOKEN) {
+  // Perguntas de categoria: precisam do histórico (Postgres) para saber o que é novo. TELEGRAM_CATEGORIZE=0 desliga.
+  if (HISTORY && process.env.TELEGRAM_CATEGORIZE !== '0') categorizer = createCategorizer({ store, ruleKey, today: todayIso });
+  const bot = startTelegramBot({
+    token: process.env.TELEGRAM_BOT_TOKEN.trim(),
+    allowedChatIds: new Set((process.env.TELEGRAM_ALLOWED_CHAT_IDS || '').split(',').map((s) => s.trim()).filter(Boolean)),
+    commands: botCommands({
+      today: todayIso,
+      listAccounts: () => listAccounts(false),
+      listBills: () => listBills(false),
+      listTransactions: (q) => listTransactions({ ...q, refresh: false }),
+      billTransactions: (accountId, billId) => billTransactions(accountId, billId, false),
+      getGoals: () => store.getGoals(),
+      listCategories: () => store.listCategories(),
+    }),
+    onCallback: (q) => categorizer?.onCallback(q) ?? null,
+    onReply: (msg) => categorizer?.onReply(msg) ?? false,
+  });
+  categorizer?.attach(bot);
+}
+
 if (HISTORY) {
   setTimeout(() => syncAll('inicialização'), 5000);
   setInterval(() => syncAll('agendada'), SYNC_HOURS * 3600 * 1000);

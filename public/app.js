@@ -1,24 +1,12 @@
 // Canguinha — dashboard
+import * as G from './shared.js';
+const { CATEGORY_PT } = G;
 const $ = (s) => document.querySelector(s);
 const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const BRL0 = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 const fmt = (v) => BRL.format(v);
 const PAGE = 100;
 
-const CATEGORY_PT = {
-  'Groceries': 'Supermercado', 'Eating out': 'Restaurantes', 'Food and drinks': 'Alimentação', 'Food delivery': 'Delivery',
-  'Taxi and ride-hailing': 'Táxi e apps', 'Transportation': 'Transporte', 'Gas stations': 'Combustível', 'Parking': 'Estacionamento',
-  'Public transportation': 'Transporte público', 'Video streaming': 'Streaming de vídeo', 'Music streaming': 'Streaming de música',
-  'Online shopping': 'Compras online', 'Shopping': 'Compras', 'Clothing': 'Vestuário', 'Electronics': 'Eletrônicos',
-  'Pharmacy': 'Farmácia', 'Health': 'Saúde', 'Leisure': 'Lazer', 'Entertainment': 'Entretenimento', 'Travel': 'Viagem',
-  'Salary': 'Salário', 'Income': 'Receitas', 'Rent': 'Aluguel', 'Housing': 'Moradia', 'Electricity': 'Energia', 'Water': 'Água',
-  'Internet': 'Internet', 'Telecommunications': 'Telecom', 'Utilities': 'Contas da casa', 'Education': 'Educação',
-  'Credit card payment': 'Pagamento de fatura', 'Same person transfer': 'Transferência própria', 'Transfers': 'Transferências',
-  'Transfer - PIX': 'PIX', 'Transfer - TED': 'TED', 'Taxes': 'Impostos', 'Bank fees': 'Tarifas bancárias', 'Investments': 'Investimentos',
-  'Services': 'Serviços', 'Digital services': 'Serviços digitais', 'Insurance': 'Seguros', 'Pets': 'Pets', 'Gym': 'Academia',
-  'Accomodation': 'Hospedagem', 'Accommodation': 'Hospedagem', 'Donations': 'Doações', 'Healthcare': 'Saúde', 'Tolls and in vehicle payment': 'Pedágio e veículo',
-  'Sem categoria': 'Sem categoria',
-};
 // categorias personalizadas chegam como "custom:<id>"
 const catName = (c) => {
   if (String(c).startsWith('custom:')) return state.cats.custom.find((x) => `custom:${x.id}` === c)?.name || 'Categoria removida';
@@ -37,7 +25,7 @@ function catChip(t) {
   const orig = t.categorySource ? ` · original: ${catName(t.pluggyCategory)}` : '';
   return `<button type="button" class="chip${isCustom(t.category) ? ' custom' : ''}" data-cat-tx="${esc(t.id)}" title="Categoria ${src}${esc(orig)} — clique para alterar">${esc(catName(t.category))}${t.categorySource ? ' ✎' : ''}</button>`;
 }
-const INTERNAL = /credit card payment|same person transfer|pagamento de fatura|pagto\.? fatura|transfer[eê]ncia (entre contas|mesma titularidade|para poupan)/i;
+const { INTERNAL } = G;
 
 const state = {
   accounts: [],
@@ -557,8 +545,7 @@ async function loadBillDetail() {
 }
 
 // ---------------------------------------------------------------- meta semanal
-const WEEKS = 8;
-const PAYMENT = /credit card payment|pagamento (de )?fatura|pagto\.? fatura|pagamento recebido/i;
+const { WEEKS } = G;
 const weekStart = (d) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 
@@ -572,35 +559,11 @@ async function loadGoalData(refresh) {
   state.goals = goals; state.weekTx = tx;
 }
 
-// Gasto da semana = compras − estornos (pagamentos da fatura não contam).
-// Lançamentos do cartão que contam para metas, com valor líquido (compra +, estorno −). Pagamentos ficam de fora.
-function spendTx(accountId) {
-  return state.weekTx
-    .filter((t) => t.accountId === accountId && !(t.direction === 'in' && (PAYMENT.test(t.category) || PAYMENT.test(t.description))))
-    .map((t) => ({ date: t.date, net: t.direction === 'out' ? (t.myAmount ?? t.amount) : -t.amount, out: t.direction === 'out' }));
-}
-
-function weeklySpend(accountId) {
-  const start0 = addDays(weekStart(new Date()), -7 * (WEEKS - 1));
-  const weeks = Array.from({ length: WEEKS }, (_, i) => ({ start: iso(addDays(start0, 7 * i)), spent: 0, count: 0 }));
-  for (const t of spendTx(accountId)) {
-    const w = weeks.find((x) => x.start === iso(weekStart(parse(t.date))));
-    if (!w) continue;
-    w.spent += t.net;
-    if (t.out) w.count++;
-  }
-  return weeks;
-}
-
-function weekStatus(accountId) {
-  const goal = state.goals[accountId]?.weekly;
-  if (!goal) return null;
-  const cur = weeklySpend(accountId).at(-1);
-  const spent = Math.max(0, cur.spent);
-  const elapsed = Math.min(7, Math.round((todayLocal() - parse(cur.start)) / 864e5) + 1); // seg..hoje
-  const avgDaily = spent / elapsed, goalDaily = goal / 7;
-  return { goal, spent, pct: (spent / goal) * 100, start: cur.start, count: cur.count, elapsed, avgDaily, goalDaily, ahead: avgDaily > goalDaily };
-}
+// Cálculos das metas em shared.js (os mesmos do bot do Telegram)
+const todayIso = () => iso(todayLocal());
+const spendTx = (accountId) => G.spendItems(state.weekTx, accountId);
+const weeklySpend = (accountId) => G.weeklySpend(spendTx(accountId), todayIso());
+const weekStatus = (accountId) => G.weekStatus(spendTx(accountId), state.goals[accountId]?.weekly, todayIso());
 
 // Sinal de ritmo: média diária acumulada vs. meta diária
 function paceBadge(x, what) {
@@ -690,43 +653,8 @@ function renderGoal(c) {
 // ---------------------------------------------------------------- meta mensal (ciclo da fatura)
 const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);
 
-// Ciclo atual = dia seguinte ao último fechamento até o fechamento estimado da fatura aberta.
-function cycleWindow(c) {
-  const lastClose = c.bills.map((b) => b.closeDate).filter(Boolean).sort().at(-1);
-  if (lastClose && c.open?.closeDate) return { start: iso(addDays(parse(lastClose), 1)), end: c.open.closeDate, estimated: true };
-  const t = todayLocal();
-  return { start: iso(new Date(t.getFullYear(), t.getMonth(), 1)), end: iso(new Date(t.getFullYear(), t.getMonth() + 1, 0)), fallback: true };
-}
-
-function monthStatus(c) {
-  const goal = state.goals[c.account.id]?.monthly;
-  if (!goal) return null;
-  const win = cycleWindow(c);
-  const today = iso(todayLocal());
-  const total = daysBetween(win.start, win.end) + 1;
-  const elapsed = Math.min(total, Math.max(1, daysBetween(win.start, today) + 1)); // inclui hoje
-  const daysLeft = Math.max(1, daysBetween(today, win.end) + 1);                    // inclui hoje
-  const tx = spendTx(c.account.id).filter((t) => t.date >= win.start && t.date <= win.end);
-  const posted = Math.max(0, tx.reduce((s, t) => s + t.net, 0));
-  const upcoming = win.fallback ? [] : (c.open?.upcoming || []);
-  const committed = upcoming.reduce((s, u) => s + (u.myAmount ?? u.amount), 0); // parcelas que ainda vão cair neste ciclo (só a sua parte)
-  const spent = posted + committed;
-  const remaining = goal - spent;
-  const perDay = Math.max(0, remaining) / daysLeft;
-  // até domingo, sem passar do fim do ciclo
-  const sunday = iso(addDays(weekStart(todayLocal()), 6));
-  const weekDays = daysBetween(today, sunday < win.end ? sunday : win.end) + 1;
-  return {
-    goal, ...win, total, elapsed, daysLeft, spent, remaining, perDay,
-    perWeek: Math.max(0, remaining) * Math.min(1, 7 / daysLeft),
-    untilSunday: perDay * weekDays, weekDays,
-    projected: committed + (posted / elapsed) * total,
-    posted, committed, upcoming,
-    avgDaily: spent / elapsed, goalDaily: goal / total, ahead: spent / elapsed > goal / total,
-    pct: (spent / goal) * 100,
-    tx,
-  };
-}
+const cycleWindow = (c) => G.cycleWindow(c, todayIso());
+const monthStatus = (c) => G.monthStatus(c, state.goals[c.account.id]?.monthly, spendTx(c.account.id), todayIso());
 
 function renderMonthlyGoal(c) {
   const id = c.account.id;
