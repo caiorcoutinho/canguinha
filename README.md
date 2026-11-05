@@ -94,6 +94,7 @@ Comandos para consultar as faturas e metas pelo Telegram (mesmos cálculos do da
 
 | Comando | Resposta |
 |---|---|
+| `/resumo` | resumo do dia: máximo para gastar hoje e na semana, fatura aberta e quanto gastou ontem |
 | `/diaria` | gasto de hoje e quanto ainda pode gastar hoje pelas metas mensal e semanal |
 | `/semana` | meta semanal: gasto, quanto resta, quanto pode gastar por dia até domingo |
 | `/mes` | meta mensal no ciclo da fatura: gasto (com parcelas previstas), por dia/semana, projeção |
@@ -104,6 +105,10 @@ Comandos para consultar as faturas e metas pelo Telegram (mesmos cálculos do da
 
 Para um cartão só, escreva parte do nome: `/fatura elo`.
 As pessoas aparecem no menu de comandos do Telegram (atualizado a cada hora e ao reiniciar).
+
+**Resumo diário:** todo dia às 08:00 (fuso `TZ_DISPLAY`, padrão America/Sao_Paulo) o bot sincroniza com a Pluggy e
+envia o `/resumo` para os chats autorizados. Mude o horário com `TELEGRAM_DAILY_SUMMARY=07:30`; `0` desliga.
+Se o app estava fora do ar no horário, o resumo sai quando ele voltar (até 4h depois). Nunca é enviado duas vezes no mesmo dia.
 
 1. No Telegram, fale com o [@BotFather](https://t.me/BotFather), mande `/newbot` e copie o token.
 2. No `.env`: `TELEGRAM_BOT_TOKEN=<token>` e reinicie o app.

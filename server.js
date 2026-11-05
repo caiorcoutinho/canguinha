@@ -861,23 +861,58 @@ setupWebhooks();
 if (process.env.TELEGRAM_BOT_TOKEN) {
   // Perguntas de categoria: precisam do histórico (Postgres) para saber o que é novo. TELEGRAM_CATEGORIZE=0 desliga.
   if (HISTORY && process.env.TELEGRAM_CATEGORIZE !== '0') categorizer = createCategorizer({ store, ruleKey, today: todayIso });
+  const cmds = botCommands({
+    today: todayIso,
+    listAccounts: () => listAccounts(false),
+    listBills: () => listBills(false),
+    listTransactions: (q) => listTransactions({ ...q, refresh: false }),
+    billTransactions: (accountId, billId) => billTransactions(accountId, billId, false),
+    getGoals: () => store.getGoals(),
+    listCategories: () => store.listCategories(),
+    peopleSummary,
+  });
   const bot = startTelegramBot({
     token: process.env.TELEGRAM_BOT_TOKEN.trim(),
     allowedChatIds: new Set((process.env.TELEGRAM_ALLOWED_CHAT_IDS || '').split(',').map((s) => s.trim()).filter(Boolean)),
-    ...botCommands({
-      today: todayIso,
-      listAccounts: () => listAccounts(false),
-      listBills: () => listBills(false),
-      listTransactions: (q) => listTransactions({ ...q, refresh: false }),
-      billTransactions: (accountId, billId) => billTransactions(accountId, billId, false),
-      getGoals: () => store.getGoals(),
-      listCategories: () => store.listCategories(),
-      peopleSummary,
-    }),
+    ...cmds,
     onCallback: (q) => categorizer?.onCallback(q) ?? null,
     onReply: (msg) => categorizer?.onReply(msg) ?? false,
   });
   categorizer?.attach(bot);
+  const at = (process.env.TELEGRAM_DAILY_SUMMARY ?? '08:00').trim();
+  if (at && at !== '0') scheduleDailySummary(bot, at, cmds.summary);
+}
+
+// Resumo diário no Telegram às `at` (HH:MM no fuso TZ_DISPLAY). Confere a cada minuto; o dia do último envio fica
+// gravado, então reiniciar não repete. Se o app estava fora do ar no horário, envia ao voltar (até 4h depois).
+function scheduleDailySummary(bot, at, summary) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(at);
+  if (!m || +m[1] > 23 || +m[2] > 59) return console.error(`[resumo] TELEGRAM_DAILY_SUMMARY inválido: "${at}" (use HH:MM)`);
+  const target = +m[1] * 60 + +m[2], CATCH_UP_MIN = 4 * 60, RETRY_MS = 15 * 60_000;
+  const clock = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  let sentDay = null, busy = false, retryAt = 0;
+  const tick = async () => {
+    if (busy || Date.now() < retryAt || !bot.chats.length) return;
+    const [h, mi] = clock.format(new Date()).split(':').map(Number);
+    const now = h * 60 + mi, day = todayIso();
+    if (now < target || now > target + CATCH_UP_MIN || sentDay === day) return;
+    busy = true;
+    try {
+      sentDay = await store.getSetting('daily_summary_sent');
+      if (sentDay === day) return;
+      // dados frescos antes de resumir (sem travar o envio se a Pluggy demorar)
+      if (HISTORY) await Promise.race([syncAll('resumo diário'), new Promise((r) => setTimeout(r, 120_000))]).catch(() => {});
+      const html = await summary();
+      for (const chatId of bot.chats) await bot.send(chatId, html);
+      await store.setSetting('daily_summary_sent', day);
+      sentDay = day;
+      console.log(`[resumo] enviado para ${bot.chats.length} chat(s)`);
+    } catch (err) {
+      console.error('[resumo]', err.message, '· nova tentativa em 15 min');
+      retryAt = Date.now() + RETRY_MS;
+    } finally { busy = false; }
+  };
+  bot.ready.then((ok) => { if (ok) { tick(); setInterval(tick, 60_000).unref(); } });
 }
 
 if (HISTORY) {
