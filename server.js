@@ -523,6 +523,34 @@ function scheduleSync(reason) {
   webhookTimer = setTimeout(() => (syncing || Promise.resolve()).then(() => syncAll(`webhook ${reason}`)), 10_000);
 }
 
+// Atualização manual de um item: depois do PATCH a Pluggy coleta os dados no banco em segundo plano.
+// Sem webhooks ninguém avisa quando termina, então acompanhamos o status do item e sincronizamos ao final.
+const ITEM_POLL_MS = 10_000;
+const ITEM_POLL_MAX_MS = 15 * 60_000;
+const watching = new Map(); // itemId → { since, status }
+
+function watchItem(itemId, status) {
+  if (watching.has(itemId)) { watching.get(itemId).status = status; return; }
+  const w = { since: Date.now(), status };
+  watching.set(itemId, w);
+  (async () => {
+    while (Date.now() - w.since < ITEM_POLL_MAX_MS) {
+      await new Promise((r) => setTimeout(r, ITEM_POLL_MS));
+      try {
+        const it = await pluggy(`/items/${itemId}`);
+        w.status = it.status;
+        if (it.status === 'UPDATING') continue;
+        console.log(`[item ${itemId}] atualização terminou: ${it.status}${it.executionStatus ? ' / ' + it.executionStatus : ''}`);
+        cache.clear();
+        // com webhooks ativos, o item/updated já dispara a sincronização
+        if (!webhook.enabled) await (syncing || Promise.resolve()).then(() => syncAll(`manual item ${itemId.slice(0, 8)}`));
+        return;
+      } catch (err) { console.error(`[item ${itemId}]`, err.message); }
+    }
+    console.error(`[item ${itemId}] ainda atualizando após ${ITEM_POLL_MAX_MS / 60_000} min; desisti de acompanhar`);
+  })().finally(() => watching.delete(itemId));
+}
+
 const safeEqual = (a, b) => {
   const x = Buffer.from(String(a)), y = Buffer.from(String(b));
   return x.length === y.length && crypto.timingSafeEqual(x, y);
@@ -576,7 +604,8 @@ async function handleApi(req, res, url) {
     const items = await Promise.all(ids.map(async (id) => {
       try {
         const it = await getItem(id, refresh);
-        return { id, connector: it.connector?.name, status: it.status, executionStatus: it.executionStatus, lastUpdatedAt: it.lastUpdatedAt, error: it.error?.message ?? null };
+        const w = watching.get(id); // status vindo do acompanhamento é mais novo que o do cache
+        return { id, connector: it.connector?.name, status: w?.status || it.status, executionStatus: it.executionStatus, lastUpdatedAt: it.lastUpdatedAt, error: it.error?.message ?? null, watching: !!w };
       } catch (err) {
         return { id, connector: null, status: 'NOT_FOUND', error: err.message };
       }
@@ -750,6 +779,7 @@ async function handleApi(req, res, url) {
     if (req.method === 'POST' && sync) {
       const r = await pluggy(`/items/${itemId}`, { method: 'PATCH', body: {} });
       cache.clear();
+      watchItem(itemId, r.status);
       return send(res, 200, { ok: true, status: r.status });
     }
   }

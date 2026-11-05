@@ -40,6 +40,8 @@ Com Postgres, tudo que vem da Pluggy é gravado e o app **lê do banco**:
 | `items`, `goals` | conexões adicionadas pela tela e metas |
 
 - Sincroniza tudo ao subir e a cada `SYNC_INTERVAL_HOURS` (padrão 6); também pelo botão em **Conexões**.
+- **Atualizar do banco** (em **Conexões**, por item) pede à Pluggy uma coleta nova no banco. O app acompanha o
+  item até terminar (até 15 min) e então sincroniza sozinho, sem depender de webhooks.
 - O histórico continua disponível depois que a Pluggy para de devolvê-lo, e o app funciona com a Pluggy fora do ar.
 - Transação que some da Pluggy dentro do período que ela ainda cobre (ex.: pendente que virou outra) recebe
   `removed_at` e deixa de aparecer, mas não é apagada. Mais antigas que a janela da Pluggy nunca são marcadas.

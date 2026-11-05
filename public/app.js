@@ -108,6 +108,7 @@ async function loadAll(refresh = false) {
     $('#demo-banner').hidden = !status.demo;
     state.status = status;
     state.accounts = accounts;
+    watchItems(status.items.filter((i) => i.watching).map((i) => i.id)); // retoma após recarregar a página
     if (!status.demo && !status.items.length) showError('Nenhuma conexão configurada. Clique em “Conexões” e adicione o ID do seu item Pluggy (MeuPluggy).');
     const ITEM_MSG = { LOGIN_ERROR: 'erro de login', OUTDATED: 'desatualizada', NOT_FOUND: 'não encontrada', WAITING_USER_INPUT: 'o banco pede uma ação sua', WAITING_USER_ACTION: 'o banco pede uma ação sua' };
     const bad = status.items.filter((i) => i.error || ITEM_MSG[i.status]);
@@ -855,7 +856,7 @@ async function openConnections() {
     ? '<li class="muted">Modo demonstração: configure as credenciais no .env.</li>'
     : items.map((i) => `<li><div><strong>${esc(i.connector || 'Item')}</strong> <span class="chip">${esc(i.status)}</span><br><code>${esc(i.id)}</code>
         ${i.lastUpdatedAt ? `<div class="muted small">atualizado ${new Date(i.lastUpdatedAt).toLocaleString('pt-BR')}</div>` : ''}</div>
-        <div style="display:flex;gap:6px"><button type="button" class="btn ghost" data-sync="${esc(i.id)}">Sincronizar</button>
+        <div style="display:flex;gap:6px"><button type="button" class="btn ghost" data-sync="${esc(i.id)}"${i.watching ? ' disabled' : ''}>${i.watching ? 'Atualizando…' : 'Atualizar do banco'}</button>
         ${i.removable ? `<button type="button" class="btn ghost" data-del="${esc(i.id)}">Remover</button>` : ''}</div></li>`).join('') || '<li class="muted">Nenhuma conexão.</li>';
   if (!dlg.open) dlg.showModal();
   renderHistory();
@@ -903,12 +904,41 @@ $('#btn-sync-history').addEventListener('click', async (e) => {
   e.target.disabled = false;
 });
 
+// Itens que a Pluggy está atualizando no banco: o servidor acompanha e sincroniza ao final;
+// aqui só consultamos o status até terminar e então recarregamos a tela.
+const watchedItems = new Set();
+let watchTimer = null;
+function watchItems(ids) {
+  ids.forEach((id) => watchedItems.add(id));
+  clearTimeout(watchTimer);
+  if (!watchedItems.size) return;
+  watchTimer = setTimeout(async () => {
+    let s;
+    try { s = await api('/api/status'); } catch { return watchItems([]); }
+    state.status = s;
+    const done = [...watchedItems].filter((id) => !s.items.find((i) => i.id === id)?.watching);
+    done.forEach((id) => watchedItems.delete(id));
+    if (done.length) {
+      const names = s.items.filter((i) => done.includes(i.id)).map((i) => `${i.connector || i.id}: ${i.status}`).join('; ');
+      await refreshData();
+      if ($('#dlg-connections').open) openConnections();
+      $('#item-msg').textContent = `Atualização concluída (${names}).`;
+    }
+    watchItems([]);
+  }, 5000);
+}
+
 $('#items-list').addEventListener('click', async (e) => {
   const sync = e.target.dataset.sync, del = e.target.dataset.del;
   if (!sync && !del) return;
   e.target.disabled = true;
   try {
-    if (sync) { const r = await api(`/api/items/${sync}/sync`, { method: 'POST' }); $('#item-msg').textContent = `Sincronização solicitada (${r.status}). Pode levar alguns minutos — depois clique em Atualizar.`; }
+    if (sync) {
+      const r = await api(`/api/items/${sync}/sync`, { method: 'POST' });
+      watchItems([sync]);
+      $('#item-msg').textContent = `Atualização pedida ao banco (${r.status}). Pode levar alguns minutos; os dados entram sozinhos quando terminar.`;
+      return; // botão fica desabilitado até o fim
+    }
     if (del) { await api(`/api/items/${del}`, { method: 'DELETE' }); await loadAll(true); openConnections(); }
   } catch (err) { $('#item-msg').textContent = err.message; }
   e.target.disabled = false;
