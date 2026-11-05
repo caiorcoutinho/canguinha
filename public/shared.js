@@ -108,3 +108,31 @@ export function todayAllowance(items, today, { week, month }) {
   if (month) res.month = Math.max(0, month.goal - (month.spent - spentToday)) / month.daysLeft;
   return res;
 }
+
+// ---------------------------------------------------------------- textos
+const SMALL = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'em', 'a', 'o']);
+// "LEAO DE OURO" → "Leao de Ouro"; siglas curtas sem vogal (PF, MP) ficam em maiúsculas.
+export const titleCase = (s) => String(s || '').toLowerCase().split(' ').map((w, i) => {
+  if (i && SMALL.has(w)) return w;
+  if (/^[a-z]{2,3}$/.test(w) && !/[aeiouy]/.test(w)) return w.toUpperCase();
+  if (/^[a-z]\/[a-z]$/.test(w)) return w.toUpperCase(); // S/A, C/C
+  return w.replace(/[a-zà-ÿ]/, (c) => c.toUpperCase());
+}).join(' ');
+
+const PARC = /\bPARC(?:ELA)?\s*\d{1,2}\s*\/\s*\d{1,2}\b/i;
+// Descrição legível para mensagens: sem cidade/país do formato de cartão (23 + 13 caracteres + " BR"),
+// sem "PARC 01/03" e sem data/hora/documento de Pix e compras no débito.
+export function tidyDescription(d) {
+  const orig = String(d || '').trim();
+  let s = orig, m, prefix = '';
+  if ((m = new RegExp(`^(.*?)\\s*${PARC.source}.*\\sBR$`, 'i').exec(s))) s = m[1];   // "LOJA PARC 01/03 CIDADE BR"
+  else if ((m = /^(.{23})([A-Za-z .'-]{13}) BR$/.exec(s))) s = m[1];                 // "LOJA (23) CIDADE (13) BR"
+  s = s.replace(PARC, ' ').replace(/\s+BR$/, '');
+  if ((m = /^PIX\s*-\s*(ENVIADO|RECEBIDO|AGEND\w*)\s+(\d{2}\/\d{2}\s+)?(\d{2}:\d{2}\s+)?(\d{6,}\s+)?/i.exec(s))) {
+    prefix = `Pix ${/^agend/i.test(m[1]) ? 'agendado' : m[1].toLowerCase()} · `; s = s.slice(m[0].length);
+  } else if ((m = /^COMPRA C\/CARTAO\s+(\d{2}\/\d{2}\s+)?(\d{2}:\d{2}\s+)?/i.exec(s))) {
+    prefix = 'Débito · '; s = s.slice(m[0].length);
+  }
+  s = titleCase(s.replace(/\s+/g, ' ').replace(/[\s\-–·*]+$/, '').trim());
+  return s ? prefix + s : orig;
+}

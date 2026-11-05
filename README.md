@@ -99,8 +99,11 @@ Comandos para consultar as faturas e metas pelo Telegram (mesmos cálculos do da
 | `/mes` | meta mensal no ciclo da fatura: gasto (com parcelas previstas), por dia/semana, projeção |
 | `/fatura` | fatura aberta, última fechada (vencimento, mínimo), limite, categorias e últimos lançamentos |
 | `/saldo` | saldo das contas e limite usado dos cartões |
+| `/pessoas` | quanto cada pessoa te deve, com o comando de cada uma |
+| `/<nome>` | mini fatura da pessoa: saldo a pagar, despesas divididas (a parte dela) e pagamentos; `/<nome> tudo` lista tudo. Ex.: `/maria`, `/ana_clara` (ou `/ana`, se for a única Ana). Se o nome coincidir com um comando, use `/pessoa <nome>` |
 
 Para um cartão só, escreva parte do nome: `/fatura elo`.
+As pessoas aparecem no menu de comandos do Telegram (atualizado a cada hora e ao reiniciar).
 
 1. No Telegram, fale com o [@BotFather](https://t.me/BotFather), mande `/newbot` e copie o token.
 2. No `.env`: `TELEGRAM_BOT_TOKEN=<token>` e reinicie o app.

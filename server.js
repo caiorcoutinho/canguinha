@@ -864,7 +864,7 @@ if (process.env.TELEGRAM_BOT_TOKEN) {
   const bot = startTelegramBot({
     token: process.env.TELEGRAM_BOT_TOKEN.trim(),
     allowedChatIds: new Set((process.env.TELEGRAM_ALLOWED_CHAT_IDS || '').split(',').map((s) => s.trim()).filter(Boolean)),
-    commands: botCommands({
+    ...botCommands({
       today: todayIso,
       listAccounts: () => listAccounts(false),
       listBills: () => listBills(false),
@@ -872,6 +872,7 @@ if (process.env.TELEGRAM_BOT_TOKEN) {
       billTransactions: (accountId, billId) => billTransactions(accountId, billId, false),
       getGoals: () => store.getGoals(),
       listCategories: () => store.listCategories(),
+      peopleSummary,
     }),
     onCallback: (q) => categorizer?.onCallback(q) ?? null,
     onReply: (msg) => categorizer?.onReply(msg) ?? false,
