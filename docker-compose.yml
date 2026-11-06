@@ -10,8 +10,8 @@ services:
       # senha fora da URL: caracteres como @ # / : ? % na senha quebrariam a URL
       DATABASE_URL: postgres://canguinha@db:5432/canguinha
       PGPASSWORD: ${POSTGRES_PASSWORD:-canguinha}
-    ports:
-      - "${APP_PORT:-3010}:3000"
+    expose:
+      - "3000"                         # só na rede interna; o acesso de fora é pelo nginx
     volumes:
       - ./data:/app/data:ro            # só lido na 1ª subida, para importar metas/conexões dos JSON antigos
     depends_on:
@@ -23,6 +23,22 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${APP_PORT:-3010}:80"
+    volumes:
+      - ./nginx:/etc/nginx/conf.d:ro   # depois de editar: docker compose exec nginx nginx -s reload
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/nginx-health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
     restart: unless-stopped
 
   db:

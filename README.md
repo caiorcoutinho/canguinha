@@ -10,9 +10,10 @@ cp .env.example .env      # preencha as credenciais Pluggy
 docker compose up -d --build
 ```
 
-Abra <http://localhost:3010> (mude com `APP_PORT` no `.env`). Sobe dois serviços:
+Abra <http://localhost:3010> (mude com `APP_PORT` no `.env`). Sobe três serviços:
 
-- **app**: o Canguinha (Node 22 Alpine)
+- **nginx**: proxy reverso (config em `nginx/default.conf`), único serviço com porta publicada
+- **app**: o Canguinha (Node 22 Alpine), acessível só pela rede interna do compose
 - **db**: Postgres 17. Guarda as conexões adicionadas pela tela e as metas. Os dados ficam no volume `canguinha_pgdata`
   e sobrevivem a `docker compose down` (só somem com `down -v`).
 
