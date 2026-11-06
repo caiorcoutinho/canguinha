@@ -28,11 +28,16 @@ export const WEEKS = 8;
 export const INTERNAL = /credit card payment|same person transfer|pagamento de fatura|pagto\.? fatura|transfer[eê]ncia (entre contas|mesma titularidade|para poupan)/i;
 export const PAYMENT = /credit card payment|pagamento (de )?fatura|pagto\.? fatura|pagamento recebido/i;
 
+// Entrada no cartão que é pagamento de fatura (não estorno). Alguns bancos mandam como transferência
+// ("PGTO. CASH AG. ...", "PGTO. QR CODE PIX ..."), então também vale descrição começando com "PGTO".
+export const isCardPayment = (t) => t.direction === 'in'
+  && (PAYMENT.test(t.category) || PAYMENT.test(t.description) || /^pgto\b/i.test(t.description || ''));
+
 // Lançamentos do cartão que contam para metas, com valor líquido (compra +, estorno −). Pagamentos da fatura ficam de fora.
 // Compras divididas com outras pessoas contam só a sua parte (`myAmount`).
 export function spendItems(tx, accountId) {
   return tx
-    .filter((t) => t.accountId === accountId && !(t.direction === 'in' && (PAYMENT.test(t.category) || PAYMENT.test(t.description))))
+    .filter((t) => t.accountId === accountId && !isCardPayment(t))
     .map((t) => ({ date: t.date, net: t.direction === 'out' ? (t.myAmount ?? t.amount) : -t.amount, out: t.direction === 'out' }));
 }
 

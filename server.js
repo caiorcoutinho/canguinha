@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import { isCardPayment } from './public/shared.js';
 import { demoAccounts, demoTransactions, demoBills } from './lib/demo.js';
 import { createStore, DuplicateError } from './lib/store.js';
 import { createAuth } from './lib/auth.js';
@@ -279,7 +280,8 @@ async function billData(acc, refresh) {
   let dueEst = acc.dueDate && (!last || acc.dueDate.slice(0, 10) > last.dueDate) ? acc.dueDate.slice(0, 10) : last ? addMonths(last.dueDate, 1) : null;
   while (dueEst && closeEst && dueEst < closeEst) dueEst = addMonths(dueEst, 1);
 
-  const sum = (list) => list.reduce((s, t) => s + (t.direction === 'out' ? t.amount : -t.amount), 0);
+  // Pagamento da fatura anterior não abate a fatura aberta (senão ela fica negativa / menor do que é).
+  const sum = (list) => list.reduce((s, t) => s + (isCardPayment(t) ? 0 : t.direction === 'out' ? t.amount : -t.amount), 0);
   const openTx = tx.filter((t) => t.bill === 'open');
   const upcoming = upcomingInstallments(tx, bills);
   const counts = {};

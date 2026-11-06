@@ -512,8 +512,13 @@ async function loadBillDetail() {
   catch (err) { $('#bill-tx-body').innerHTML = `<tr><td colspan="4">${esc(err.message)}</td></tr>`; return; }
   if (state.billKey !== key) return;
   state.billTx = tx;
-  const sum = tx.reduce((s, t) => s + (t.direction === 'out' ? t.amount : -t.amount), 0);
-  $('#bill-tx-body').innerHTML = tx.map((t) => `<tr>
+  const sum = tx.reduce((s, t) => s + (G.isCardPayment(t) ? 0 : t.direction === 'out' ? t.amount : -t.amount), 0);
+  const hasPay = tx.some(G.isCardPayment);
+  $('#bill-tx-body').innerHTML = tx.map((t) => G.isCardPayment(t) ? `<tr class="muted">
+      <td class="date">${brDate(t.date)}</td>
+      <td class="desc">${esc(t.description)} <span class="chip">pagamento</span></td>
+      <td></td>
+      <td class="num">${fmt(t.amount)}</td></tr>` : `<tr>
       <td class="date">${brDate(t.date)}</td>
       <td class="desc">${esc(t.description)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}${shareChip(t)}</td>
       <td>${catChip(t)}</td>
@@ -530,7 +535,8 @@ async function loadBillDetail() {
   }
   $('#bill-tx-total').textContent = up.length ? `${fmt(sum)} + ${fmt(up.reduce((s, u) => s + u.amount, 0))} previstas` : fmt(sum);
   $('#bill-tx-note').textContent = b.id === 'open'
-    ? (up.length ? `As ${up.length} linhas "prevista" são próximas parcelas de compras que estavam na última fatura; o valor é o da parcela anterior. ` : '') + 'Fatura ainda aberta: o valor sobe até o fechamento.'
+    ? (up.length ? `As ${up.length} linhas "prevista" são próximas parcelas de compras que estavam na última fatura; o valor é o da parcela anterior. ` : '')
+      + (hasPay ? 'Pagamentos de fatura anterior aparecem na lista mas não abatem o total. ' : '') + 'Fatura ainda aberta: o valor sobe até o fechamento.'
     : Math.abs(sum - b.total) > 0.01 ? `O total da fatura (${fmt(b.total)}) difere da soma dos lançamentos: ele inclui saldo anterior, pagamentos, juros e encargos.` : '';
   const byCat = {};
   for (const t of tx) if (t.direction === 'out') byCat[t.category] = (byCat[t.category] || 0) + t.amount;
