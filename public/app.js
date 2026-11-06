@@ -696,7 +696,7 @@ function renderMonthlyGoal(c) {
       <div class="goal-allow">
         <div><div class="label">Pode gastar por dia</div><div class="v">${fmt(m.perDay)}</div></div>
         <div><div class="label">Por semana</div><div class="v">${fmt(m.perWeek)}</div></div>
-        <div><div class="label">Até domingo${m.weekDays > 1 ? ` (${m.weekDays} dias)` : ' (hoje)'}</div><div class="v">${fmt(m.untilSunday)}</div></div>
+        <div><div class="label">Até domingo${m.weekDays > 1 ? ` (${m.weekDays} dias)` : ' (hoje)'}</div><div class="v">${fmt(Math.max(0, m.untilSunday))} <span class="muted small">de ${fmt(m.weekBudget)}</span></div></div>
       </div>
       ${over ? '<p class="small neg">A meta deste ciclo já foi atingida: qualquer gasto novo fica acima dela.</p>' : ''}
       <div class="goal-facts">

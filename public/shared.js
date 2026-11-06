@@ -92,11 +92,19 @@ export function monthStatus(card, goal, items, today) {
   const perDay = Math.max(0, remaining) / daysLeft;
   // até domingo, sem passar do fim do ciclo
   const sunday = isoAddDays(weekStartIso(today), 6);
-  const weekDays = daysBetween(today, sunday < win.end ? sunday : win.end) + 1;
+  const weekEnd = sunday < win.end ? sunday : win.end;
+  const weekDays = daysBetween(today, weekEnd) + 1;
+  // Orçamento da semana pela meta mensal, congelado no início da semana (segunda, ou início do ciclo):
+  // o valor por dia daquele dia × dias da semana no ciclo. O que não se gasta fica na semana, em vez de
+  // ser diluído pelo resto do ciclo (o que faria o número cair a cada dia sem gasto).
+  const ws = weekStartIso(today) > win.start ? weekStartIso(today) : win.start;
+  const before = Math.max(0, tx.filter((t) => t.date < ws).reduce((s, t) => s + t.net, 0));
+  const weekBudget = (Math.max(0, goal - before - committed) / (daysBetween(ws, win.end) + 1)) * (daysBetween(ws, weekEnd) + 1);
+  const weekSpent = Math.max(0, tx.filter((t) => t.date >= ws && t.date <= today).reduce((s, t) => s + t.net, 0));
   return {
     goal, ...win, total, elapsed, daysLeft, spent, remaining, perDay,
     perWeek: Math.max(0, remaining) * Math.min(1, 7 / daysLeft),
-    untilSunday: perDay * weekDays, weekDays,
+    untilSunday: Math.min(weekBudget - weekSpent, Math.max(0, remaining)), weekDays, weekBudget, weekSpent, weekStart: ws,
     projected: committed + (posted / elapsed) * total,
     posted, committed, upcoming,
     avgDaily: spent / elapsed, goalDaily: goal / total, ahead: spent / elapsed > goal / total,
