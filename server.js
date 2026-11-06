@@ -924,6 +924,43 @@ function scheduleDailySummary(bot, at, summary) {
   bot.ready.then((ok) => { if (ok) { tick(); setInterval(tick, 60_000).unref(); } });
 }
 
+// Pede à Pluggy que colete os dados no banco todo dia às `at` (HH:MM no fuso TZ_DISPLAY), em vez de depender só
+// do auto-sync dela (que roda ~24h após a última atualização). O dia da última execução fica gravado, então
+// reiniciar não repete; se o app estava fora do ar no horário, roda ao voltar (até 2h depois).
+function scheduleItemRefresh(at) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(at);
+  if (!m || +m[1] > 23 || +m[2] > 59) return console.error(`[atualização] PLUGGY_UPDATE_AT inválido: "${at}" (use HH:MM)`);
+  const target = +m[1] * 60 + +m[2], CATCH_UP_MIN = 120;
+  const clock = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  let doneDay = null, busy = false;
+  const tick = async () => {
+    if (busy) return;
+    const [h, mi] = clock.format(new Date()).split(':').map(Number);
+    const now = h * 60 + mi, day = todayIso();
+    if (now < target || now > target + CATCH_UP_MIN || doneDay === day) return;
+    busy = true;
+    try {
+      doneDay = await store.getSetting('item_refresh_day');
+      if (doneDay === day) return;
+      await store.setSetting('item_refresh_day', day);
+      doneDay = day;
+      for (const itemId of await loadItemIds()) {
+        try {
+          const r = await pluggy(`/items/${itemId}`, { method: 'PATCH', body: {} });
+          console.log(`[atualização] item ${itemId.slice(0, 8)} solicitado: ${r.status}`);
+          watchItem(itemId, r.status);
+        } catch (err) { console.error(`[atualização] item ${itemId.slice(0, 8)}:`, err.message); }
+      }
+      cache.clear();
+    } catch (err) { console.error('[atualização]', err.message); } finally { busy = false; }
+  };
+  tick(); setInterval(tick, 60_000).unref();
+  console.log(`Atualização diária dos bancos na Pluggy às ${at} (${TZ})`);
+}
+
+const UPDATE_AT = (process.env.PLUGGY_UPDATE_AT || '').trim();
+if (!DEMO && UPDATE_AT && UPDATE_AT !== '0') scheduleItemRefresh(UPDATE_AT);
+
 if (HISTORY) {
   setTimeout(() => syncAll('inicialização'), 5000);
   setInterval(() => syncAll('agendada'), SYNC_HOURS * 3600 * 1000);
