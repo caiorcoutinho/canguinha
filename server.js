@@ -917,6 +917,7 @@ if (process.env.TELEGRAM_BOT_TOKEN) {
     billTransactions: (accountId, billId) => billTransactions(accountId, billId, false),
     getGoals: () => store.getGoals(),
     listCategories: () => store.listCategories(),
+    listPeople: () => store.listPeople(),
     peopleSummary,
   });
   const bot = startTelegramBot({
