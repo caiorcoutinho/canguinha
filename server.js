@@ -284,6 +284,7 @@ async function billData(acc, refresh) {
   const sum = (list) => list.reduce((s, t) => s + (isCardPayment(t) ? 0 : t.direction === 'out' ? t.amount : -t.amount), 0);
   const openTx = tx.filter((t) => t.bill === 'open');
   const upcoming = upcomingInstallments(tx, bills);
+  const installments = installmentPlan(tx, bills, closeEst, dueEst);
   const counts = {};
   for (const t of tx) if (t.bill) counts[t.bill] = (counts[t.bill] || 0) + 1;
   return {
@@ -295,6 +296,7 @@ async function billData(acc, refresh) {
         id: 'open', closeDate: closeEst, dueDate: dueEst, total: sum(openTx), txCount: openTx.length, estimated: true, status: 'open',
         upcoming, upcomingTotal: upcoming.reduce((s, u) => s + u.amount, 0),
       },
+      installments,
     },
   };
 }
@@ -320,6 +322,39 @@ function upcomingInstallments(tx, bills) {
       installment: `${t.installmentNumber + 1}/${t.totalInstallments}`, amount: t.amount,
     }))
     .sort((a, b) => b.amount - a.amount);
+}
+
+// Todas as parcelas que ainda vão cair (não lançadas), por compra e por fatura. Mesma regra de upcomingInstallments:
+// a parcela seguinte à mais recente cai na fatura aberta (se a mais recente está na última fechada) ou na próxima
+// (se já está na aberta); as demais, uma por fatura. Valor = o da parcela mais recente.
+function installmentPlan(tx, bills, closeEst, dueEst) {
+  const lastClosed = bills.find((b) => b.closeDate)?.id;
+  const latest = new Map();
+  for (const t of tx) {
+    if (!(t.totalInstallments > 1) || !t.installmentNumber || t.direction !== 'out') continue;
+    const key = [t.purchaseDate || '', t.totalInstallments, stripInstallment(t.description).toLowerCase()].join('|');
+    const cur = latest.get(key);
+    if (!cur || t.installmentNumber > cur.installmentNumber) latest.set(key, t);
+  }
+  const purchases = [];
+  const byBill = new Map(); // offset (0 = aberta) → total
+  for (const t of latest.values()) {
+    const left = t.totalInstallments - t.installmentNumber;
+    if (left <= 0) continue;
+    const offset = t.bill === 'open' ? 1 : t.bill && t.bill === lastClosed ? 0 : null;
+    if (offset == null) continue; // parcela mais recente em fatura antiga: dado incompleto, não dá para prever
+    for (let i = 0; i < left; i++) byBill.set(offset + i, (byBill.get(offset + i) || 0) + t.amount);
+    purchases.push({
+      description: stripInstallment(t.description), category: t.category, purchaseDate: t.purchaseDate, purchaseKey: t.purchaseKey,
+      amount: t.amount, next: t.installmentNumber + 1, totalInstallments: t.totalInstallments, left, remaining: t.amount * left,
+      lastDueDate: dueEst ? addMonths(dueEst, offset + left - 1) : null,
+    });
+  }
+  purchases.sort((a, b) => b.remaining - a.remaining);
+  const schedule = [...byBill.entries()].sort((a, b) => a[0] - b[0]).map(([i, total]) => ({
+    open: i === 0, closeDate: closeEst ? addMonths(closeEst, i) : null, dueDate: dueEst ? addMonths(dueEst, i) : null, total,
+  }));
+  return { purchases, schedule, total: purchases.reduce((s, p) => s + p.remaining, 0) };
 }
 
 // ---------------------------------------------------------------- categorias personalizadas
