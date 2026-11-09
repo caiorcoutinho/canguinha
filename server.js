@@ -429,7 +429,9 @@ async function listBills(refresh) {
   return Promise.all(cards.map(async (acc) => {
     try {
       const s = (await billData(acc, refresh)).summary;
-      return s.open?.upcoming?.length ? { ...s, open: { ...s.open, upcoming: s.open.upcoming.map(cat) } } : s;
+      const out = s.open?.upcoming?.length ? { ...s, open: { ...s.open, upcoming: s.open.upcoming.map(cat) } } : s;
+      // parcelas futuras: só a divisão da compra inteira vale para elas (a de uma parcela só não se repete)
+      return { ...out, installments: { ...s.installments, purchases: s.installments.purchases.map((p) => cat({ ...p, direction: 'out' })) } };
     }
     catch (err) { console.error(`[faturas ${acc.id}]`, err.message); return { account: acc, bills: [], open: null, error: err.message }; }
   }));
