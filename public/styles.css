@@ -228,3 +228,8 @@ tr:hover button.chip.share-add, button.chip.share-add:focus-visible { opacity: 1
 .person-bal { font-variant-numeric: tabular-nums; font-weight: 600; }
 .items li.sel { border-color: var(--accent); }
 .pay-form .prefix { color: var(--muted); }
+#bill-cat-detail { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+#bill-cat-hint { margin: 8px 0 0; }
+.chart-box.short { height: 200px; }
+#week-days { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+#week-days-note { margin: 8px 0 0; }

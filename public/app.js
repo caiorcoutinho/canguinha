@@ -540,16 +540,61 @@ async function loadBillDetail() {
     : Math.abs(sum - b.total) > 0.01 ? `O total da fatura (${fmt(b.total)}) difere da soma dos lançamentos: ele inclui saldo anterior, pagamentos, juros e encargos.` : '';
   const byCat = {};
   for (const t of tx) if (t.direction === 'out') byCat[t.category] = (byCat[t.category] || 0) + t.amount;
-  let cats = Object.entries(byCat).sort((x, y) => y[1] - x[1]);
-  if (cats.length > 9) cats = [...cats.slice(0, 8), ['Outros', cats.slice(8).reduce((s, [, v]) => s + v, 0)]];
+  let cats = Object.entries(byCat).sort((x, y) => y[1] - x[1]).map(([k, v]) => [k, v, [k]]);
+  if (cats.length > 9) cats = [...cats.slice(0, 8), [OTHER_CAT, cats.slice(8).reduce((s, [, v]) => s + v, 0), cats.slice(8).map(([k]) => k)]];
+  state.billCats = cats;
+  // mantém a categoria aberta se continuar na mesma fatura (ex.: depois de recategorizar)
+  if (state.billCatSel?.bill !== key || !cats.some(([k]) => k === state.billCatSel.cat)) state.billCatSel = null;
+  renderBillCatChart();
+}
+
+const OTHER_CAT = '__outros';
+function renderBillCatChart() {
+  const cats = state.billCats || [];
+  const sel = state.billCatSel?.cat;
   const hopts = baseOptions(true);
   hopts.interaction = { mode: 'nearest', axis: 'y', intersect: false };
+  hopts.onClick = (_, els) => { if (els[0]) toggleBillCat(cats[els[0].index][0]); };
+  hopts.onHover = (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; };
+  const base = cssVar('--series-2');
   setChart('chart-bill-cat', {
     type: 'bar',
-    data: { labels: cats.map(([k]) => catName(k)), datasets: [{ label: 'Gasto', data: cats.map(([, v]) => v), backgroundColor: cssVar('--series-2'), borderRadius: 4, borderSkipped: 'start', maxBarThickness: 22, categoryPercentage: 0.8, barPercentage: 0.9 }] },
+    data: {
+      labels: cats.map(([k]) => k === OTHER_CAT ? 'Outros' : catName(k)),
+      datasets: [{
+        label: 'Gasto', data: cats.map(([, v]) => v),
+        backgroundColor: cats.map(([k]) => !sel || k === sel ? base : base + '55'),
+        borderRadius: 4, borderSkipped: 'start', maxBarThickness: 22, categoryPercentage: 0.8, barPercentage: 0.9,
+      }],
+    },
     options: hopts,
   }, !cats.length);
+  $('#bill-cat-hint').hidden = !cats.length || !!sel;
+  renderBillCatDetail();
 }
+
+function toggleBillCat(cat) {
+  state.billCatSel = state.billCatSel?.cat === cat ? null : { bill: state.billKey, cat };
+  renderBillCatChart();
+  if (state.billCatSel) $('#bill-cat-detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderBillCatDetail() {
+  const sel = state.billCatSel && state.billCats?.find(([k]) => k === state.billCatSel.cat);
+  $('#bill-cat-detail').hidden = !sel;
+  if (!sel) return;
+  const [cat, total, keys] = sel;
+  const rows = state.billTx.filter((t) => t.direction === 'out' && keys.includes(t.category))
+    .sort((a, b) => b.amount - a.amount);
+  $('#bill-cat-title').textContent = `${cat === OTHER_CAT ? 'Outros' : catName(cat)} · ${rows.length} ${rows.length === 1 ? 'gasto' : 'gastos'}`;
+  $('#bill-cat-body').innerHTML = rows.map((t) => `<tr>
+      <td class="date">${brDate(t.date)}</td>
+      <td class="desc">${esc(t.description)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}${shareChip(t)}</td>
+      <td>${catChip(t)}</td>
+      <td class="num">${fmt(t.amount)}</td></tr>`).join('');
+  $('#bill-cat-total').textContent = fmt(total);
+}
+$('#btn-bill-cat-close').addEventListener('click', () => { state.billCatSel = null; renderBillCatChart(); });
 
 // ---------------------------------------------------------------- meta semanal
 const { WEEKS } = G;
@@ -647,15 +692,103 @@ function renderGoal(c) {
       ? ` Gasto: ${fmt(it.parsed.y)}${goal ? (it.parsed.y > goal ? ` · ${fmt(it.parsed.y - goal)} acima` : ` · ${fmt(goal - it.parsed.y)} abaixo`) : ''}`
       : ` Meta: ${fmt(it.parsed.y)}`,
   };
+  if (!weeks.some((x) => x.start === state.weekSel)) state.weekSel = null;
+  const dim = (i) => state.weekSel && weeks[i].start !== state.weekSel ? color + '55' : color;
+  opts.onClick = (_, els) => {
+    if (!els.length) return;
+    const s = weeks[els[0].index].start;
+    state.weekSel = state.weekSel === s || els[0].index === weeks.length - 1 ? null : s;
+    renderGoal(state.bills.find((x) => x.account.id === state.billCard));
+  };
+  opts.onHover = (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; };
   const datasets = [{
     type: 'bar', label: 'Gasto', data: weeks.map((x) => Math.max(0, x.spent)),
-    backgroundColor: weeks.map((_, i) => i === weeks.length - 1 ? stripes(color) : color),
+    backgroundColor: weeks.map((_, i) => i === weeks.length - 1 ? stripes(dim(i)) : dim(i)),
     borderColor: color, borderWidth: weeks.map((_, i) => i === weeks.length - 1 ? 1.5 : 0),
     borderRadius: 4, borderSkipped: 'start', maxBarThickness: 32, categoryPercentage: 0.7, order: 2,
   }];
   if (goal) datasets.push({ type: 'line', label: 'Meta', data: weeks.map(() => goal), borderColor: cssVar('--text-2'), borderWidth: 2, borderDash: [6, 4], pointRadius: 0, pointHoverRadius: 0, order: 1 });
   setChart('chart-weeks', { type: 'bar', data: { labels: weeks.map((x) => brDate(x.start).slice(0, 5)), datasets }, options: opts }, false);
+  renderWeekDays(id, weeks, goal);
 }
+
+// gastos dia a dia (seg–dom) da semana escolhida no gráfico semanal; padrão: semana atual
+const WEEKDAYS = ['seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom'];
+function renderWeekDays(id, weeks, goal) {
+  const cur = weeks.at(-1);
+  const wk = weeks.find((x) => x.start === state.weekSel) || cur;
+  const isCur = wk === cur;
+  const today = todayIso();
+  const days = Array.from({ length: 7 }, (_, i) => G.isoAddDays(wk.start, i));
+  const byDay = Object.fromEntries(days.map((d) => [d, { spent: 0, count: 0 }]));
+  for (const t of spendTx(id)) if (byDay[t.date]) { byDay[t.date].spent += t.net; if (t.out) byDay[t.date].count++; }
+  const daily = goal ? goal / 7 : null;
+  $('#week-days-title').textContent = `Gastos por dia · ${isCur ? 'semana atual' : `semana de ${brDate(wk.start).slice(0, 5)}`}`;
+  $('#btn-week-days-reset').hidden = isCur;
+  const color = cssVar('--series-2');
+  const opts = baseOptions();
+  opts.interaction = { mode: 'index', intersect: false };
+  opts.plugins.tooltip.callbacks = {
+    title: (it) => `${WEEKDAYS[it[0].dataIndex]}, ${brDate(days[it[0].dataIndex])}${days[it[0].dataIndex] === today ? ' (hoje)' : ''}`,
+    label: (it) => {
+      if (it.datasetIndex === 1) return ` Meta diária: ${fmt(it.parsed.y)}`;
+      const d = byDay[days[it.dataIndex]];
+      return ` Gasto: ${fmt(d.spent)} · ${d.count} compra(s)${daily ? (d.spent > daily ? ` · ${fmt(d.spent - daily)} acima` : '') : ''}`;
+    },
+  };
+  if (!days.includes(state.weekDaySel) || state.weekDaySel > today) state.weekDaySel = null;
+  const sel = state.weekDaySel;
+  const dim = (d) => sel && d !== sel ? color + '55' : color;
+  opts.onClick = (_, els) => {
+    if (!els.length || days[els[0].index] > today) return;
+    const d = days[els[0].index];
+    state.weekDaySel = state.weekDaySel === d ? null : d;
+    renderWeekDays(id, weeks, goal);
+    if (state.weekDaySel) $('#week-day-detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+  opts.onHover = (e, els) => { e.native.target.style.cursor = els.length && days[els[0].index] <= today ? 'pointer' : 'default'; };
+  const datasets = [{
+    type: 'bar', label: 'Gasto',
+    data: days.map((d) => d > today ? null : Math.max(0, byDay[d].spent)),
+    backgroundColor: days.map((d) => d === today ? stripes(dim(d)) : dim(d)),
+    borderColor: color, borderWidth: days.map((d) => d === today ? 1.5 : 0),
+    borderRadius: 4, borderSkipped: 'start', maxBarThickness: 32, categoryPercentage: 0.7, order: 2,
+  }];
+  if (daily) datasets.push({ type: 'line', label: 'Meta diária', data: days.map(() => daily), borderColor: cssVar('--text-2'), borderWidth: 2, borderDash: [6, 4], pointRadius: 0, pointHoverRadius: 0, order: 1 });
+  setChart('chart-week-days', { type: 'bar', data: { labels: days.map((d, i) => `${WEEKDAYS[i]} ${d.slice(8)}`), datasets }, options: opts }, false);
+  const spent = days.reduce((s, d) => s + byDay[d].spent, 0);
+  const elapsed = isCur ? G.daysBetween(wk.start, today) + 1 : 7;
+  const top = days.filter((d) => d <= today).sort((a, b) => byDay[b].spent - byDay[a].spent)[0];
+  $('#week-days-note').textContent = spent > 0
+    ? `Média de ${fmt(spent / elapsed)}/dia${daily ? ` (meta: ${fmt(daily)}/dia)` : ''} · maior gasto: ${WEEKDAYS[days.indexOf(top)]} ${brDate(top).slice(0, 5)}, ${fmt(byDay[top].spent)}. Clique numa semana acima para ver os dias dela.`
+    : 'Nenhum gasto nesta semana. Clique numa semana acima para ver os dias dela.';
+  renderWeekDayDetail(id, sel);
+}
+
+// compras do dia clicado (mesmos lançamentos que somam na barra: sem pagamento de fatura, estorno abate)
+function renderWeekDayDetail(id, day) {
+  $('#week-day-detail').hidden = !day;
+  if (!day) return;
+  const rows = state.weekTx.filter((t) => t.accountId === id && t.date === day && !G.isCardPayment(t))
+    .map((t) => ({ t, v: t.direction === 'out' ? (t.myAmount ?? t.amount) : -t.amount }))
+    .sort((a, b) => b.v - a.v);
+  const dow = WEEKDAYS[(parse(day).getDay() + 6) % 7];
+  $('#week-day-title').textContent = `${dow}, ${brDate(day)} · ${rows.length} ${rows.length === 1 ? 'lançamento' : 'lançamentos'}`;
+  $('#week-day-body').innerHTML = rows.map(({ t, v }) => `<tr>
+      <td class="desc">${esc(t.description)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}${shareChip(t)}${t.myAmount != null && t.direction === 'out' && t.myAmount !== t.amount ? `<small>total da compra ${fmt(t.amount)}</small>` : ''}</td>
+      <td>${catChip(t)}</td>
+      <td class="num ${v < 0 ? 'pos' : ''}">${v < 0 ? '−' : ''}${fmt(Math.abs(v))}</td></tr>`).join('')
+    || '<tr><td colspan="3" class="muted">Nenhum gasto neste dia.</td></tr>';
+  $('#week-day-total').textContent = fmt(rows.reduce((s, r) => s + r.v, 0));
+}
+$('#btn-week-day-close').addEventListener('click', () => {
+  state.weekDaySel = null;
+  renderGoal(state.bills.find((x) => x.account.id === state.billCard));
+});
+$('#btn-week-days-reset').addEventListener('click', () => {
+  state.weekSel = null;
+  renderGoal(state.bills.find((x) => x.account.id === state.billCard));
+});
 
 // ---------------------------------------------------------------- meta mensal (ciclo da fatura)
 const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);

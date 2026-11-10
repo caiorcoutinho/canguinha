@@ -147,6 +147,24 @@
             </div>
           </div>
           <div class="chart-box"><canvas id="chart-weeks" role="img" aria-label="Gastos do cartão por semana comparados à meta"></canvas></div>
+          <div id="week-days">
+            <div class="panel-head">
+              <h3 id="week-days-title">Gastos por dia</h3>
+              <button type="button" class="btn ghost icon" id="btn-week-days-reset" title="Voltar à semana atual" hidden>Semana atual</button>
+            </div>
+            <div class="chart-box short"><canvas id="chart-week-days" role="img" aria-label="Gastos do cartão por dia da semana"></canvas></div>
+            <p class="muted small" id="week-days-note"></p>
+            <div id="week-day-detail" hidden>
+              <div class="panel-head"><h3 id="week-day-title"></h3><button type="button" class="btn ghost icon" id="btn-week-day-close" title="Fechar">✕</button></div>
+              <div class="table-wrap">
+                <table class="tx">
+                  <thead><tr><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
+                  <tbody id="week-day-body"></tbody>
+                  <tfoot><tr><td colspan="2">Total do dia</td><td class="num" id="week-day-total"></td></tr></tfoot>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
       <section class="grid-charts goal-grid">
@@ -213,6 +231,17 @@
         <div class="panel">
           <div class="panel-head"><h3>Gastos da fatura por categoria</h3></div>
           <div class="chart-box tall"><canvas id="chart-bill-cat" role="img" aria-label="Gastos da fatura por categoria"></canvas></div>
+          <p class="muted small" id="bill-cat-hint">Clique numa barra para ver os gastos da categoria.</p>
+          <div id="bill-cat-detail" hidden>
+            <div class="panel-head"><h3 id="bill-cat-title"></h3><button type="button" class="btn ghost icon" id="btn-bill-cat-close" title="Fechar">✕</button></div>
+            <div class="table-wrap">
+              <table class="tx">
+                <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
+                <tbody id="bill-cat-body"></tbody>
+                <tfoot><tr><td colspan="3">Total</td><td class="num" id="bill-cat-total"></td></tr></tfoot>
+              </table>
+            </div>
+          </div>
         </div>
       </section>
     </div>
