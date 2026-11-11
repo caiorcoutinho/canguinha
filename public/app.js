@@ -44,6 +44,10 @@ const state = {
   billSel: 'open',
   goals: {},
   weekTx: [],
+  calTx: [],     // lançamentos do mês aberto no calendário
+  calKey: null,  // `${cartão}|${YYYY-MM}` de calTx
+  calMonth: null, // 'YYYY-MM'; null = mês atual
+  calDay: null,
   billTx: [],
   cats: { custom: [], rules: [] },
   people: [],
@@ -488,6 +492,7 @@ function renderBills() {
   }).join('');
   renderGoal(c);
   renderMonthlyGoal(c);
+  renderCalendar(c);
   loadBillDetail();
 }
 
@@ -609,6 +614,7 @@ async function loadGoalData(refresh) {
     cards.length ? api(`/api/transactions?from=${from}&to=${iso(todayLocal())}&accountIds=${cards.join(',')}${refresh ? '&refresh=1' : ''}`).catch(() => []) : [],
   ]);
   state.goals = goals; state.weekTx = tx;
+  state.calKey = null; // recarrega o calendário junto
 }
 
 // Cálculos das metas em shared.js (os mesmos do bot do Telegram)
@@ -789,6 +795,102 @@ $('#btn-week-days-reset').addEventListener('click', () => {
   state.weekSel = null;
   renderGoal(state.bills.find((x) => x.account.id === state.billCard));
 });
+
+// ---------------------------------------------------------------- calendário do mês
+// Mês do calendário (seg–dom) com o gasto de cada dia no cartão; clicar num dia lista os lançamentos.
+// Mesmas regras das metas: sem pagamento de fatura, estorno abate, compra dividida conta só a sua parte.
+const MONTHS_FULL = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const NUM0 = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 });
+const calCard = () => state.bills.find((x) => x.account.id === state.billCard);
+const monthShift = (ym, n) => { const d = new Date(Number(ym.slice(0, 4)), Number(ym.slice(5)) - 1 + n, 1); return iso(d).slice(0, 7); };
+
+async function renderCalendar(c) {
+  const id = c.account.id;
+  const today = todayIso();
+  const ym = state.calMonth || today.slice(0, 7);
+  const first = `${ym}-01`;
+  const last = iso(new Date(Number(ym.slice(0, 4)), Number(ym.slice(5)), 0));
+  const key = `${id}|${ym}`;
+  $('#cal-title').textContent = `${MONTHS_FULL[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`;
+  $('#btn-cal-today').hidden = ym === today.slice(0, 7);
+  $('#btn-cal-next').disabled = ym >= today.slice(0, 7);
+  if (state.calKey !== key) {
+    $('#cal-grid').setAttribute('aria-busy', 'true');
+    let tx;
+    try { tx = await api(`/api/transactions?from=${first}&to=${last}&accountIds=${id}`); }
+    catch (err) { $('#cal-note').textContent = `Não foi possível carregar o mês: ${err.message}`; return; }
+    finally { $('#cal-grid').removeAttribute('aria-busy'); }
+    // trocou de cartão/mês enquanto carregava: a chamada mais nova desenha
+    if (`${state.billCard}|${state.calMonth || todayIso().slice(0, 7)}` !== key) return;
+    state.calTx = tx; state.calKey = key;
+  }
+
+  const byDay = {};
+  for (const t of G.spendItems(state.calTx, id)) {
+    const d = (byDay[t.date] ||= { spent: 0, count: 0 });
+    d.spent += t.net; if (t.out) d.count++;
+  }
+  const n = Number(last.slice(8));
+  const days = Array.from({ length: n }, (_, i) => `${ym}-${pad(i + 1)}`);
+  const max = Math.max(0, ...days.map((d) => byDay[d]?.spent || 0));
+  const weekly = state.goals[id]?.weekly;
+  const daily = weekly ? weekly / 7 : null;
+  if (!days.includes(state.calDay) || state.calDay > today) state.calDay = null;
+
+  const lead = (parse(first).getDay() + 6) % 7; // segunda = 0
+  const head = WEEKDAYS.map((w) => `<div class="cal-h" role="columnheader">${w}</div>`).join('');
+  const blanks = '<div class="cal-blank" aria-hidden="true"></div>'.repeat(lead);
+  const cells = days.map((d) => {
+    const v = byDay[d]?.spent || 0, cnt = byDay[d]?.count || 0, future = d > today;
+    const lvl = v > 0 && max > 0 ? Math.max(0.12, v / max) : 0;
+    const cls = ['cal-d', future && 'future', d === today && 'today', d === state.calDay && 'sel', daily && v > daily && 'over'].filter(Boolean).join(' ');
+    const label = `${brDate(d)}: ${future ? 'dia futuro' : v ? `${fmt(v)} em ${cnt} compra(s)` : 'sem gastos'}`;
+    return `<button type="button" role="gridcell" class="${cls}" data-day="${d}" style="--lvl:${(lvl * 100).toFixed(0)}%" aria-label="${label}" aria-pressed="${d === state.calDay}"${future ? ' disabled' : ''}>
+      <span class="n">${Number(d.slice(8))}</span>${!future && v ? `<span class="v">${v < 0 ? '−' : ''}${NUM0.format(Math.abs(v))}</span>` : ''}</button>`;
+  }).join('');
+  $('#cal-grid').innerHTML = head + blanks + cells;
+
+  const past = days.filter((d) => d <= today);
+  const total = past.reduce((s, d) => s + (byDay[d]?.spent || 0), 0);
+  const top = past.slice().sort((a, b) => (byDay[b]?.spent || 0) - (byDay[a]?.spent || 0))[0];
+  const over = daily ? past.filter((d) => (byDay[d]?.spent || 0) > daily).length : 0;
+  $('#cal-note').textContent = !past.length ? 'Mês ainda não começou.'
+    : total > 0 ? `Total ${fmt(total)} · média de ${fmt(total / past.length)}/dia · maior gasto: ${brDate(top).slice(0, 5)}, ${fmt(byDay[top].spent)}${daily ? ` · ${over} dia(s) acima da meta diária de ${fmt(daily)} (em vermelho)` : ''}. Clique num dia para ver os lançamentos.`
+    : 'Nenhum gasto neste mês.';
+  renderCalDay(id, state.calDay);
+}
+
+function renderCalDay(id, day) {
+  $('#cal-detail').hidden = !day;
+  if (!day) return;
+  const rows = state.calTx.filter((t) => t.accountId === id && t.date === day && !G.isCardPayment(t))
+    .map((t) => ({ t, v: t.direction === 'out' ? (t.myAmount ?? t.amount) : -t.amount }))
+    .sort((a, b) => b.v - a.v);
+  const dow = WEEKDAYS[(parse(day).getDay() + 6) % 7];
+  $('#cal-day-title').textContent = `${dow}, ${brDate(day)} · ${rows.length} ${rows.length === 1 ? 'lançamento' : 'lançamentos'}`;
+  $('#cal-day-body').innerHTML = rows.map(({ t, v }) => `<tr>
+      <td class="desc">${esc(t.description)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}${shareChip(t)}${t.myAmount != null && t.direction === 'out' && t.myAmount !== t.amount ? `<small>total da compra ${fmt(t.amount)}</small>` : ''}</td>
+      <td>${catChip(t)}</td>
+      <td class="num ${v < 0 ? 'pos' : ''}">${v < 0 ? '−' : ''}${fmt(Math.abs(v))}</td></tr>`).join('')
+    || '<tr><td colspan="3" class="muted">Nenhum gasto neste dia.</td></tr>';
+  $('#cal-day-total').textContent = fmt(rows.reduce((s, r) => s + r.v, 0));
+}
+
+$('#cal-grid').addEventListener('click', (e) => {
+  const d = e.target.closest('[data-day]')?.dataset.day;
+  if (!d) return;
+  state.calDay = state.calDay === d ? null : d;
+  renderCalendar(calCard());
+  if (state.calDay) $('#cal-detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+});
+const calGo = (ym) => { state.calMonth = ym; state.calDay = null; renderCalendar(calCard()); };
+$('#btn-cal-prev').addEventListener('click', () => calGo(monthShift(state.calMonth || todayIso().slice(0, 7), -1)));
+$('#btn-cal-next').addEventListener('click', () => {
+  const next = monthShift(state.calMonth || todayIso().slice(0, 7), 1);
+  calGo(next >= todayIso().slice(0, 7) ? null : next);
+});
+$('#btn-cal-today').addEventListener('click', () => calGo(null));
+$('#btn-cal-day-close').addEventListener('click', () => { state.calDay = null; renderCalendar(calCard()); });
 
 // ---------------------------------------------------------------- meta mensal (ciclo da fatura)
 const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);
@@ -1026,11 +1128,11 @@ $('#btn-add-item').addEventListener('click', async () => {
 // ---------------------------------------------------------------- categorias
 const catDlg = { tx: null };
 function findTx(id) {
-  return state.transactions.find((t) => t.id === id) || state.billTx.find((t) => t.id === id) || state.weekTx.find((t) => t.id === id);
+  return state.transactions.find((t) => t.id === id) || state.billTx.find((t) => t.id === id) || state.weekTx.find((t) => t.id === id) || state.calTx.find((t) => t.id === id);
 }
 function categoryOptions(selected) {
   const pluggy = new Set(Object.keys(CATEGORY_PT));
-  for (const t of [...state.transactions, ...state.weekTx, ...state.billTx]) {
+  for (const t of [...state.transactions, ...state.weekTx, ...state.billTx, ...state.calTx]) {
     for (const c of [t.pluggyCategory, t.category]) if (c && !isCustom(c)) pluggy.add(c);
   }
   const byName = (a, b) => catName(a).localeCompare(catName(b), 'pt-BR');

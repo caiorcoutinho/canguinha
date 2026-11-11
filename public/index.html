@@ -197,6 +197,29 @@
           <div class="chart-box"><canvas id="chart-mburn" role="img" aria-label="Gasto acumulado no período comparado ao ritmo da meta mensal"></canvas></div>
         </div>
       </section>
+      <section class="panel" id="cal-panel">
+        <div class="panel-head">
+          <h3>Calendário de gastos</h3>
+          <div class="cal-nav">
+            <button type="button" class="btn ghost icon" id="btn-cal-prev" title="Mês anterior" aria-label="Mês anterior">‹</button>
+            <strong id="cal-title" aria-live="polite"></strong>
+            <button type="button" class="btn ghost icon" id="btn-cal-next" title="Próximo mês" aria-label="Próximo mês">›</button>
+            <button type="button" class="btn ghost" id="btn-cal-today" hidden>Mês atual</button>
+          </div>
+        </div>
+        <div class="cal" id="cal-grid" role="grid" aria-label="Gastos do cartão por dia do mês"></div>
+        <p class="muted small" id="cal-note"></p>
+        <div id="cal-detail" hidden>
+          <div class="panel-head"><h3 id="cal-day-title"></h3><button type="button" class="btn ghost icon" id="btn-cal-day-close" title="Fechar">✕</button></div>
+          <div class="table-wrap">
+            <table class="tx">
+              <thead><tr><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
+              <tbody id="cal-day-body"></tbody>
+              <tfoot><tr><td colspan="2">Total do dia</td><td class="num" id="cal-day-total"></td></tr></tfoot>
+            </table>
+          </div>
+        </div>
+      </section>
       <section class="panel">
         <div class="panel-head">
           <h3>Histórico de faturas</h3>
