@@ -623,7 +623,7 @@ async function loadGoalData(refresh) {
 const todayIso = () => iso(todayLocal());
 const spendTx = (accountId) => G.spendItems(state.weekTx, accountId);
 const weeklySpend = (accountId) => G.weeklySpend(spendTx(accountId), todayIso());
-const weekStatus = (accountId) => G.weekStatus(spendTx(accountId), state.goals[accountId]?.weekly, todayIso());
+const weekStatus = (accountId) => G.weekStatus(spendTx(accountId), state.goals[accountId]?.weekly, todayIso(), state.bills.find((x) => x.account.id === accountId));
 
 // Sinal de ritmo: média diária acumulada vs. meta diária
 function paceBadge(x, what) {
@@ -680,6 +680,7 @@ function renderGoal(c) {
     }
     $('#goal-body').innerHTML = `
       <div class="goal-big">${fmt(w.spent)} <small>de ${fmt(w.goal)} nesta semana</small></div>
+      ${w.installments > 0.004 ? `<p class="small muted" style="margin:2px 0 6px">${fmt(w.posted)} lançados + <strong>${fmt(w.installments)}</strong> de parcelas que ainda vão cair (a parte desta semana)</p>` : ''}
       <div class="goal-meter ${cls}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(100, w.pct).toFixed(0)}"><span style="width:${Math.min(100, w.pct)}%"></span></div>
       <div class="goal-status">${status}</div>
       ${paceBadge(w, `nesta semana (${w.elapsed} dia${w.elapsed > 1 ? 's' : ''})`)}
@@ -710,7 +711,8 @@ function renderGoal(c) {
   };
   opts.onHover = (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; };
   const datasets = [{
-    type: 'bar', label: 'Gasto', data: weeks.map((x) => Math.max(0, x.spent)),
+    // semana atual: com a parte das parcelas que ainda vão cair (como na meta)
+    type: 'bar', label: 'Gasto', data: weeks.map((x, i) => i === weeks.length - 1 ? Math.max(0, x.spent) + (G.weekStatus(spendTx(id), 1, todayIso(), c)?.installments || 0) : Math.max(0, x.spent)),
     backgroundColor: weeks.map((_, i) => i === weeks.length - 1 ? stripes(dim(i)) : dim(i)),
     borderColor: color, borderWidth: weeks.map((_, i) => i === weeks.length - 1 ? 1.5 : 0),
     borderRadius: 4, borderSkipped: 'start', maxBarThickness: 32, categoryPercentage: 0.7, order: 2,

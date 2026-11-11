@@ -54,16 +54,31 @@ export function weeklySpend(items, today) {
   return weeks;
 }
 
-export function weekStatus(items, goal, today) {
+// Parcelas que ainda vão cair na fatura aberta (só a sua parte) e até quando o ciclo vai. `card` no formato de /api/bills.
+export function committedInstallments(card) {
+  const up = card?.open?.upcoming || [];
+  return { committed: up.reduce((s, u) => s + (u.myAmount ?? u.amount), 0), end: card?.open?.closeDate || null, count: up.length };
+}
+
+// `card` (opcional): as parcelas que ainda vão cair no ciclo entram na semana, divididas igualmente pelos dias
+// de hoje até o fechamento; a semana leva a parte de hoje até domingo. As já lançadas contam no dia em que caíram.
+export function weekStatus(items, goal, today, card) {
   if (!goal) return null;
   const cur = weeklySpend(items, today).at(-1);
-  const spent = Math.max(0, cur.spent);
+  const { committed, end } = committedInstallments(card);
+  const sunday = isoAddDays(cur.start, 6);
+  let installments = 0;
+  if (committed > 0 && end && end >= today) {
+    const until = sunday < end ? sunday : end;
+    installments = committed * (daysBetween(today, until) + 1) / (daysBetween(today, end) + 1);
+  }
+  const spent = Math.max(0, cur.spent) + installments;
   const elapsed = Math.min(7, daysBetween(cur.start, today) + 1); // seg..hoje
   const daysLeft = 7 - elapsed + 1;                                // hoje..dom
   const avgDaily = spent / elapsed, goalDaily = goal / 7;
   return {
     goal, spent, pct: (spent / goal) * 100, start: cur.start, end: isoAddDays(cur.start, 6), count: cur.count, elapsed, daysLeft,
-    remaining: goal - spent, avgDaily, goalDaily, ahead: avgDaily > goalDaily,
+    remaining: goal - spent, avgDaily, goalDaily, ahead: avgDaily > goalDaily, installments, posted: spent - installments,
   };
 }
 
