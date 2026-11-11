@@ -347,6 +347,8 @@ function installmentPlan(tx, bills, closeEst, dueEst) {
     purchases.push({
       description: stripInstallment(t.description), category: t.category, purchaseDate: t.purchaseDate, purchaseKey: t.purchaseKey,
       amount: t.amount, next: t.installmentNumber + 1, totalInstallments: t.totalInstallments, left, remaining: t.amount * left,
+      rawDescription: t.description, // com "PARC nn/NN CIDADE BR": o bot limpa igual às parcelas lançadas
+      offset, // fatura em que cai a próxima parcela (0 = aberta, 1 = a seguinte...); a parcela next+i cai em offset+i
       lastDueDate: dueEst ? addMonths(dueEst, offset + left - 1) : null,
     });
   }
