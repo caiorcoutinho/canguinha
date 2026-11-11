@@ -59,6 +59,8 @@ const charts = {};
 const pad = (n) => String(n).padStart(2, '0');
 const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parse = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+// fatura aberta = o que já foi lançado + parcelas de compras antigas que ainda vão cair até o fechamento
+const openTotal = (o) => (o?.total || 0) + (o?.upcomingTotal || 0);
 const brDate = (s) => { const [y, m, d] = s.split('-'); return `${d}/${m}/${y}`; };
 
 function presetRange(p) {
@@ -183,7 +185,7 @@ function renderKpis(tx) {
   const cardIds = new Set(cards.map((a) => a.id));
   const cardBills = state.bills.filter((c) => cardIds.has(c.account.id));
   const fatura = cardBills.reduce((s, c) => s + c.bills.filter((b) => b.status === 'due').reduce((x, b) => x + b.total, 0), 0);
-  const aberta = cardBills.reduce((s, c) => s + (c.open?.total || 0), 0);
+  const aberta = cardBills.reduce((s, c) => s + openTotal(c.open), 0);
   const inc = tx.filter((t) => t.direction === 'in').reduce((s, t) => s + t.amount, 0);
   const out = tx.filter((t) => t.direction === 'out').reduce((s, t) => s + t.amount, 0);
   const res = inc - out;
@@ -397,7 +399,7 @@ function renderBillAlert() {
       if (n <= 7) items.push(`<li><strong>${esc(c.account.name)}</strong>: fatura de <strong>${fmt(b.total)}</strong> vence ${inDays(n)} (${brDate(b.dueDate)})${b.minimum ? ` · mínimo ${fmt(b.minimum)}` : ''}</li>`);
     }
     const o = c.open;
-    if (o?.closeDate && o.txCount && daysUntil(o.closeDate) <= 3) items.push(`<li><strong>${esc(c.account.name)}</strong>: fatura aberta fecha ${inDays(Math.max(0, daysUntil(o.closeDate)))} (~${brDate(o.closeDate)}) · ${fmt(o.total)} até agora</li>`);
+    if (o?.closeDate && o.txCount && daysUntil(o.closeDate) <= 3) items.push(`<li><strong>${esc(c.account.name)}</strong>: fatura aberta fecha ${inDays(Math.max(0, daysUntil(o.closeDate)))} (~${brDate(o.closeDate)}) · ${fmt(openTotal(o))} com as parcelas previstas</li>`);
   }
   for (const c of state.bills) {
     const w = weekStatus(c.account.id);
@@ -446,7 +448,7 @@ function renderBills() {
   const tile = (label, value, hint, cls = '') => `<div class="kpi"><div class="label">${label}</div><div class="value ${cls}">${value}</div><div class="hint">${hint}</div></div>`;
   const o = c.open;
   $('#bill-kpis').innerHTML = [
-    tile('Fatura aberta (parcial)', fmt(o?.total || 0), (o?.upcomingTotal ? `+ ${fmt(o.upcomingTotal)} em ${o.upcoming.length} parcela(s) previstas → ~${fmt(o.total + o.upcomingTotal)} · ` : '') + (o?.closeDate ? `fecha ~${brDate(o.closeDate)} · vence ~${brDate(o.dueDate)}` : `${o?.txCount || 0} lançamento(s)`)),
+    tile('Fatura aberta', fmt(openTotal(o)), (o?.upcomingTotal ? `${fmt(o.total)} lançados + ${fmt(o.upcomingTotal)} em ${o.upcoming.length} parcela(s) que ainda vão cair · ` : '') + (o?.closeDate ? `fecha ~${brDate(o.closeDate)} · vence ~${brDate(o.dueDate)}` : `${o?.txCount || 0} lançamento(s)`)),
     next ? tile('Próxima a pagar', fmt(next.total), `vence ${brDate(next.dueDate)} (${inDays(daysUntil(next.dueDate))})${next.minimum ? ` · mínimo ${fmt(next.minimum)}` : ''}`)
          : tile('Próxima a pagar', '—', 'nenhuma fatura fechada a vencer'),
     tile('Média das últimas faturas', recent.length ? fmt(avg) : '—', recent.length ? `${recent.length} fatura(s) fechada(s)` : ''),
@@ -461,7 +463,7 @@ function renderBills() {
   opts.interaction = { mode: 'nearest', axis: 'x', intersect: false };
   opts.plugins.tooltip.callbacks = {
     title: (it) => { const b = rows[it[0].dataIndex]; return `Vencimento ${b.id === 'open' ? '~' : ''}${brDate(b.dueDate)}`; },
-    label: (it) => { const b = rows[it.dataIndex]; return ` ${b.id === 'open' ? 'Parcial até agora' : 'Total'}: ${fmt(b.total)}`; },
+    label: (it) => { const b = rows[it.dataIndex]; return b.id === 'open' ? ` Até agora, com parcelas previstas: ${fmt(openTotal(b))}` : ` Total: ${fmt(b.total)}`; },
     afterLabel: (it) => { const b = rows[it.dataIndex]; return b.closeDate ? ` Fechamento ${b.id === 'open' ? '~' : ''}${brDate(b.closeDate)}` : ''; },
   };
   opts.onClick = (_, els) => { if (els[0]) selectBill(rows[els[0].index].id); };
@@ -470,7 +472,7 @@ function renderBills() {
     data: {
       labels: rows.map((b) => monthLabel(b.dueDate)),
       datasets: [{
-        label: 'Fatura', data: rows.map((b) => b.total),
+        label: 'Fatura', data: rows.map((b) => b.id === 'open' ? openTotal(b) : b.total),
         backgroundColor: rows.map((b) => b.id === 'open' ? stripes(color) : color),
         borderColor: color, borderWidth: rows.map((b) => b.id === 'open' ? 1.5 : 0),
         borderRadius: 4, borderSkipped: 'start', maxBarThickness: 36, categoryPercentage: 0.7,
@@ -488,7 +490,7 @@ function renderBills() {
       <td><span class="status ${st.cls}">${st.text}</span></td>
       <td class="num">${b.txCount}</td>
       <td class="num">${b.minimum != null ? fmt(b.minimum) : '—'}</td>
-      <td class="num"><strong>${fmt(b.total)}</strong>${b.id === 'open' ? ' <span class="chip">parcial</span>' : ''}</td></tr>`;
+      <td class="num"><strong>${fmt(b.id === 'open' ? openTotal(b) : b.total)}</strong>${b.id === 'open' ? ' <span class="chip">parcial</span>' : ''}</td></tr>`;
   }).join('');
   renderGoal(c);
   renderMonthlyGoal(c);
@@ -672,8 +674,8 @@ function renderGoal(c) {
     } else if (lastClose && c.open?.closeDate) {
       const days = Math.round((parse(c.open.closeDate) - parse(lastClose)) / 864e5);
       const cycleGoal = (w.goal * days) / 7;
-      const diff = cycleGoal - c.open.total;
-      cycle = `<div class="wide"><div class="label">Fatura aberta vs. meta</div><div class="v">${fmt(c.open.total)} <span class="muted small">de ${fmt(cycleGoal)}</span></div>
+      const diff = cycleGoal - openTotal(c.open);
+      cycle = `<div class="wide"><div class="label">Fatura aberta vs. meta</div><div class="v">${fmt(openTotal(c.open))} <span class="muted small">de ${fmt(cycleGoal)}</span></div>
         <div class="h">${(days / 7).toFixed(1).replace('.', ',')} semanas de ciclo · ${diff >= 0 ? `folga de ${fmt(diff)}` : `${fmt(-diff)} acima`}</div></div>`;
     }
     $('#goal-body').innerHTML = `
