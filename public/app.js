@@ -39,7 +39,7 @@ const state = {
   shown: PAGE,
   loadedRange: null,
   bills: [],
-  view: 'overview',
+  view: 'today',
   billCard: null,
   billSel: 'open',
   goals: {},
@@ -62,6 +62,8 @@ const parse = (s) => { const [y, m, d] = s.split('-').map(Number); return new Da
 // fatura aberta = o que já foi lançado + parcelas de compras antigas que ainda vão cair até o fechamento
 const openTotal = (o) => (o?.total || 0) + (o?.upcomingTotal || 0);
 const brDate = (s) => { const [y, m, d] = s.split('-'); return `${d}/${m}/${y}`; };
+// no ano corrente a data vai sem o ano (15/11); de outros anos, completa
+const shortDate = (s) => s.slice(0, 4) === String(new Date().getFullYear()) ? brDate(s).slice(0, 5) : brDate(s);
 
 function presetRange(p) {
   const t = new Date();
@@ -92,7 +94,7 @@ function showError(msg) {
 
 async function loadAll(refresh = false) {
   const btn = $('#btn-refresh');
-  btn.disabled = true; btn.textContent = 'Carregando…';
+  btn.disabled = true; btn.classList.add('loading'); btn.querySelector('.lbl').textContent = 'Atualizando…';
   showError('');
   try {
     const q = refresh ? '?refresh=1' : '';
@@ -109,17 +111,20 @@ async function loadAll(refresh = false) {
     const bad = status.items.filter((i) => i.error || ITEM_MSG[i.status]);
     if (bad.length) showError(`Atenção, conexão: ${bad.map((i) => `${i.connector || i.id} — ${ITEM_MSG[i.status] || i.status}${i.error ? ': ' + i.error : ''}`).join('; ')}. Reconecte em meu.pluggy.ai se necessário.`);
     const last = accounts.map((a) => a.lastUpdatedAt).filter(Boolean).sort().pop();
-    $('#updated').textContent = last ? `Sincronizado em ${new Date(last).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}` : '';
+    state.lastSync = last;
+    $('#updated').textContent = last ? `Sincronizado ${syncAgo(last)}` : '';
+    $('#updated').title = last ? new Date(last).toLocaleString('pt-BR') : '';
     await loadTransactions(refresh);
     state.bills = await state.billsPromise;
     await loadGoalData(refresh);
     renderBillAlert();
     render();
+    renderToday();
     if (state.view === 'bills') renderBills();
   } catch (err) {
     showError(err.message);
   } finally {
-    btn.disabled = false; btn.textContent = 'Atualizar';
+    btn.disabled = false; btn.classList.remove('loading'); btn.querySelector('.lbl').textContent = 'Atualizar';
   }
 }
 
@@ -156,6 +161,8 @@ function shareChip(t, attr = 'data-share-tx') {
   const names = t.shares.map((x) => `${personName(x.personId)} ${fmt(x.amount)}`).join(' · ');
   return ` <button type="button" class="chip share" ${attr}="${esc(t.id)}" title="Sua parte: ${fmt(t.myAmount)}${t.shareScope === 'purchase' ? ' · vale para todas as parcelas' : ''} — clique para alterar">👥 ${esc(names)}</button>`;
 }
+const D = (t) => `<span title="${esc(t.description)}">${esc(G.tidyDescription(t.description))}</span>`;
+const instLabel = (a) => /meupluggy/i.test(a?.institution || '') ? '' : (a?.institution || '');
 const fullNote = (t) => t.fullAmount != null && t.fullAmount !== t.amount ? `<small>de ${fmt(t.fullAmount)}</small>` : '';
 
 function tableTx(list) {
@@ -178,14 +185,8 @@ function render() {
 }
 
 function renderKpis(tx) {
-  const accs = selectedAccounts();
-  const banks = accs.filter((a) => a.kind === 'bank');
-  const cards = accs.filter((a) => a.kind === 'credit');
+  const banks = selectedAccounts().filter((a) => a.kind === 'bank');
   const saldo = banks.reduce((s, a) => s + a.balance, 0);
-  const cardIds = new Set(cards.map((a) => a.id));
-  const cardBills = state.bills.filter((c) => cardIds.has(c.account.id));
-  const fatura = cardBills.reduce((s, c) => s + c.bills.filter((b) => b.status === 'due').reduce((x, b) => x + b.total, 0), 0);
-  const aberta = cardBills.reduce((s, c) => s + openTotal(c.open), 0);
   const inc = tx.filter((t) => t.direction === 'in').reduce((s, t) => s + t.amount, 0);
   const out = tx.filter((t) => t.direction === 'out').reduce((s, t) => s + t.amount, 0);
   const res = inc - out;
@@ -193,16 +194,10 @@ function renderKpis(tx) {
   const tile = (label, value, hint, cls = '') =>
     `<div class="kpi"><div class="label">${label}</div><div class="value ${cls}">${value}</div><div class="hint">${hint}</div></div>`;
   $('#kpis').innerHTML = [
-    tile('Saldo em contas', banks.length ? fmt(saldo) : '—', banks.length ? `${banks.length} conta(s) · líquido de faturas ${fmt(saldo - fatura)}` : 'nenhuma conta selecionada'),
-    tile('Faturas a vencer', cards.length ? fmt(fatura) : '—', cards.length ? `fechadas ainda não vencidas · + ${fmt(aberta)} na aberta` : 'nenhum cartão selecionado'),
-    tile('Entradas no período', fmt(inc), `${brDate(state.from)} – ${brDate(state.to)}`),
-    tile('Saídas no período', fmt(out), `média ${fmt(out / days)}/dia`),
+    tile('Saídas', fmt(out), `média ${fmt(out / days)}/dia`),
+    tile('Entradas', fmt(inc), `${brDate(state.from).slice(0, 5)} – ${brDate(state.to).slice(0, 5)}`),
     tile('Resultado', (res >= 0 ? '+' : '−') + fmt(Math.abs(res)), res >= 0 ? 'sobrou no período' : 'gastou mais do que entrou', res >= 0 ? 'pos' : 'neg'),
-    ...(state.people.length ? [(() => {
-      const owing = state.people.filter((p) => p.balance > 0.004);
-      const total = owing.reduce((s, p) => s + p.balance, 0);
-      return tile('A receber de outros', fmt(total), owing.length ? `${owing.map((p) => esc(p.name)).slice(0, 3).join(', ')}${owing.length > 3 ? '…' : ''} · <a href="#" id="kpi-people">ver</a>` : 'ninguém te deve');
-    })()] : []),
+    tile('Saldo em conta', banks.length ? fmt(saldo) : '—', banks.length ? 'hoje' : 'nenhuma conta selecionada'),
   ].join('');
 }
 
@@ -210,23 +205,25 @@ function accLabel(a) {
   return a.kind === 'credit' ? 'Cartão de crédito' : a.subtype === 'SAVINGS_ACCOUNT' ? 'Poupança' : 'Conta corrente';
 }
 
+// cartão sem limite, sem fatura e sem lançamento no período não serve como filtro: fica de fora
+const accountUsed = (a) => a.kind !== 'credit' || a.balance || state.transactions.some((t) => t.accountId === a.id)
+  || state.bills.some((c) => c.account.id === a.id && (c.bills.length || c.open?.txCount));
 function renderAccounts() {
-  const sorted = [...state.accounts].sort((a, b) => a.kind.localeCompare(b.kind) || a.institution.localeCompare(b.institution));
+  const sorted = state.accounts.filter(accountUsed).sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name));
+  $('#accounts').classList.toggle('filtering', state.selected.size > 0);
   $('#accounts').innerHTML = sorted.map((a) => {
     const off = state.selected.size && !state.selected.has(a.id);
-    let extra = `<div class="meta">${a.number || ''}</div>`;
-    if (a.kind === 'credit') {
-      const used = a.creditLimit ? Math.min(100, ((a.creditLimit - (a.availableLimit ?? a.creditLimit - a.balance)) / a.creditLimit) * 100) : null;
-      const ob = state.bills.find((c) => c.account.id === a.id)?.open;
-      extra = `<div class="meta">limite usado</div>` +
-        (used != null ? `<div class="meter" title="${used.toFixed(0)}% do limite usado"><span style="width:${used}%"></span></div>
-         <div class="meta">disponível ${fmt(a.availableLimit ?? 0)} de ${BRL0.format(a.creditLimit)}</div>` : '') +
-        (ob?.closeDate ? `<div class="meta">fatura aberta ${fmt(ob.total)} · fecha ~${brDate(ob.closeDate)}</div>` : '');
+    let meta = accLabel(a) + (instLabel(a) ? ` · ${esc(instLabel(a))}` : '');
+    let meter = '';
+    if (a.kind === 'credit' && a.creditLimit) {
+      const used = Math.min(100, ((a.creditLimit - (a.availableLimit ?? a.creditLimit - a.balance)) / a.creditLimit) * 100);
+      meter = `<div class="meter" title="${used.toFixed(0)}% do limite usado"><span style="width:${used}%"></span></div>`;
+      meta = `disponível ${fmt(a.availableLimit ?? 0)} de ${BRL0.format(a.creditLimit)}`;
     }
     return `<button class="acc ${off ? 'off' : ''}" data-id="${a.id}" style="${a.institutionColor ? `--inst:${a.institutionColor}` : ''}" aria-pressed="${!off}">
-      <div class="top"><span>${esc(a.institution)}</span><span class="tag">${accLabel(a)}</span></div>
-      <div class="name">${esc(a.name)}</div>
-      <div class="bal">${fmt(a.balance)}</div>${extra}</button>`;
+      <span class="name">${esc(a.name)}</span>
+      <span class="bal">${a.kind === 'credit' ? 'usado ' : ''}${fmt(a.balance)}</span>
+      ${meter}<span class="meta">${meta}</span></button>`;
   }).join('') || '<p class="muted">Nenhuma conta encontrada.</p>';
 }
 
@@ -283,6 +280,10 @@ function setChart(id, config, empty) {
   box.querySelector('.empty')?.remove();
   if (empty) { box.insertAdjacentHTML('beforeend', '<div class="empty">Sem dados</div>'); charts[id] = null; return; }
   if (config.options.indexAxis === 'y') box.style.height = `${Math.max(160, config.data.labels.length * 34 + 40)}px`;
+  // o clique costuma redesenhar o próprio gráfico: roda depois que o Chart.js termina o evento,
+  // senão ele segue processando o clique num gráfico já destruído (TypeError 'handleEvent')
+  const click = config.options?.onClick;
+  if (click) config.options.onClick = (...a) => setTimeout(() => click(...a));
   charts[id] = new Chart(document.getElementById(id), config);
 }
 
@@ -314,13 +315,22 @@ function renderCharts(tx) {
   const hbar = { ...bar, maxBarThickness: 22, categoryPercentage: 0.8 };
   const hopts = baseOptions(true);
   hopts.interaction = { mode: 'nearest', axis: 'y', intersect: false };
+  const selCat = $('#cat-filter').value;
+  const copts = { ...hopts, onClick: (_, els) => {
+    if (!els[0]) return;
+    const c = cats[els[0].index][0];
+    if (c === 'Outros') return;
+    filterByCategory($('#cat-filter').value === c ? '' : c);
+  }, onHover: (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; } };
+  const base = cssVar('--series-2');
   setChart('chart-cat', {
     type: 'bar',
-    data: { labels: cats.map(([c]) => catName(c)), datasets: [{ label: 'Gasto', data: cats.map(([, v]) => v), backgroundColor: cssVar('--series-2'), ...hbar }] },
-    options: hopts,
+    data: { labels: cats.map(([c]) => c === 'Outros' ? 'Outros' : catName(c)), datasets: [{ label: 'Gasto', data: cats.map(([, v]) => v), backgroundColor: cats.map(([c]) => !selCat || c === selCat ? base : base + '55'), ...hbar }] },
+    options: copts,
   }, !cats.length);
 
-  // por conta
+  // por conta (painel removido da tela; mantido se voltar)
+  if (!document.getElementById('chart-acc')) return;
   const accs = accById();
   const byAcc = {};
   for (const t of tx) if (t.direction === 'out') byAcc[t.accountId] = (byAcc[t.accountId] || 0) + t.amount;
@@ -328,13 +338,21 @@ function renderCharts(tx) {
   setChart('chart-acc', {
     type: 'bar',
     data: {
-      labels: accRows.map(([id]) => `${accs[id]?.name ?? id} · ${accs[id]?.institution ?? ''}`),
+      labels: accRows.map(([id]) => innerWidth < 600 ? (accs[id]?.name ?? id) : `${accs[id]?.name ?? id} · ${accs[id]?.institution ?? ''}`),
       datasets: [{ label: 'Gasto', data: accRows.map(([, v]) => v), backgroundColor: cssVar('--series-2'), ...hbar }],
     },
     options: hopts,
   }, !accRows.length);
 }
 
+function filterByCategory(c) {
+  renderCategoryFilter(periodTx());
+  $('#cat-filter').value = c;
+  state.shown = PAGE;
+  renderTable(periodTx());
+  renderCharts(periodTx());
+  if (c) $('#tx-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 function renderCategoryFilter(tx) {
   const sel = $('#cat-filter');
   const cur = sel.value;
@@ -352,10 +370,10 @@ function renderTable(tx) {
   $('#tx-body').innerHTML = rows.slice(0, state.shown).map((t) => {
     const a = accs[t.accountId] || {};
     return `<tr>
-      <td class="date">${brDate(t.date)}</td>
-      <td class="desc">${esc(t.description)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}${shareChip(t)}${t.merchant && t.merchant !== t.description ? `<small>${esc(t.merchant)}</small>` : ''}</td>
-      <td>${catChip(t)}</td>
-      <td style="${a.institutionColor ? `--inst:${a.institutionColor}` : ''}"><span class="dot"></span>${esc(a.name || '')}</td>
+      <td class="date" title="${brDate(t.date)}">${shortDate(t.date)}</td>
+      <td class="desc">${D(t)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}${shareChip(t)}${t.merchant && t.merchant !== t.description ? `<small>${esc(t.merchant)}</small>` : ''}</td>
+      <td class="cat">${catChip(t)}</td>
+      <td class="acct" style="${a.institutionColor ? `--inst:${a.institutionColor}` : ''}"><span class="dot"></span>${esc(a.name || '')}</td>
       <td class="num ${t.direction === 'in' ? 'pos' : ''}">${t.direction === 'in' ? '+' : '−'}${fmt(t.amount)}${fullNote(t)}</td></tr>`;
   }).join('') || '<tr><td colspan="5" class="muted">Nenhuma transação no período.</td></tr>';
   $('#btn-more').hidden = rows.length <= state.shown;
@@ -391,6 +409,8 @@ function billStatus(b) {
 }
 
 function renderBillAlert() {
+  $('#bill-alert').hidden = true; return; // o conteúdo vive nos cartões da aba Hoje
+  // eslint-disable-next-line no-unreachable
   const items = [];
   for (const c of state.bills) {
     for (const b of c.bills) {
@@ -417,7 +437,7 @@ function renderBillAlert() {
   }
   const el = $('#bill-alert');
   el.hidden = !items.length;
-  el.innerHTML = items.length ? `💳 Cartões<ul>${items.join('')}</ul>` : '';
+  el.innerHTML = items.length ? `<strong>Atenção</strong><ul>${items.join('')}</ul>` : '';
 }
 
 function stripes(color) {
@@ -439,21 +459,43 @@ function renderBills() {
   }
   if (!cards.some((c) => c.account.id === state.billCard)) { state.billCard = cards[0].account.id; state.billSel = 'open'; }
   const c = cards.find((x) => x.account.id === state.billCard);
-  $('#card-select').innerHTML = cards.map((x) => `<button data-card="${x.account.id}" class="${x === c ? 'active' : ''}">${esc(x.account.name)} · ${esc(x.account.institution)}</button>`).join('');
+  // nome do cartão basta; o banco só entra quando dois cartões têm o mesmo nome
+  const dupName = (x) => cards.filter((y) => y.account.name === x.account.name).length > 1;
+  $('#card-select').innerHTML = cards.map((x) => `<button data-card="${x.account.id}" class="${x === c ? 'active' : ''}" title="${esc(x.account.name)}${instLabel(x.account) ? ` · ${esc(instLabel(x.account))}` : ''}">${esc(x.account.name)}${dupName(x) && instLabel(x.account) ? ` · ${esc(instLabel(x.account))}` : ''}</button>`).join('');
+  $('#card-select-box').hidden = cards.length < 2;
 
   const a = c.account;
   const next = [...c.bills].filter((b) => b.status === 'due').sort((x, y) => x.dueDate.localeCompare(y.dueDate))[0];
   const recent = c.bills.slice(0, 6);
   const avg = recent.length ? recent.reduce((s, b) => s + b.total, 0) / recent.length : 0;
-  const tile = (label, value, hint, cls = '') => `<div class="kpi"><div class="label">${label}</div><div class="value ${cls}">${value}</div><div class="hint">${hint}</div></div>`;
   const o = c.open;
-  $('#bill-kpis').innerHTML = [
-    tile('Fatura aberta', fmt(openTotal(o)), (o?.upcomingTotal ? `${fmt(o.total)} lançados + ${fmt(o.upcomingTotal)} em ${o.upcoming.length} parcela(s) que ainda vão cair · ` : '') + (o?.closeDate ? `fecha ~${brDate(o.closeDate)} · vence ~${brDate(o.dueDate)}` : `${o?.txCount || 0} lançamento(s)`)),
-    next ? tile('Próxima a pagar', fmt(next.total), `vence ${brDate(next.dueDate)} (${inDays(daysUntil(next.dueDate))})${next.minimum ? ` · mínimo ${fmt(next.minimum)}` : ''}`)
-         : tile('Próxima a pagar', '—', 'nenhuma fatura fechada a vencer'),
-    tile('Média das últimas faturas', recent.length ? fmt(avg) : '—', recent.length ? `${recent.length} fatura(s) fechada(s)` : ''),
-    a.creditLimit ? tile('Limite disponível', fmt(a.availableLimit ?? 0), `usado ${fmt(a.balance)} de ${BRL0.format(a.creditLimit)} · inclui parcelas futuras`) : '',
-  ].join('');
+  const total = openTotal(o), posted = o?.total || 0, up = o?.upcomingTotal || 0;
+  const scale = Math.max(total, avg, 1);
+  const used = a.creditLimit ? Math.min(100, (a.balance / a.creditLimit) * 100) : null;
+  const closeIn = o?.closeDate ? Math.max(0, daysUntil(o.closeDate)) : null;
+  $('#bill-kpis').innerHTML = `
+    <div class="panel bh-main">
+      <div class="bh-top"><span class="label">Fatura aberta${cards.length < 2 ? ` · ${esc(a.name)}` : ''}</span>
+        ${o?.closeDate ? `<span class="pill">fecha ${inDays(closeIn)} · ${brDate(o.closeDate).slice(0, 5)}</span>` : ''}</div>
+      <div class="bh-big">${fmt(total)}</div>
+      <div class="bh-bar" role="img" aria-label="Lançado ${fmt(posted)}, parcelas que ainda vão cair ${fmt(up)}${avg ? `, média das faturas ${fmt(avg)}` : ''}">
+        <span class="seg-posted" style="width:${(posted / scale) * 100}%"></span><span class="seg-up" style="width:${(up / scale) * 100}%"></span>
+        ${avg ? `<i class="bh-mark" style="left:${(avg / scale) * 100}%" title="Média das últimas faturas"></i>` : ''}
+      </div>
+      <div class="bh-legend">
+        <span><i class="sw" style="background:var(--series-2)"></i>Lançado <strong>${fmt(posted)}</strong></span>
+        ${up ? `<span><i class="sw sw-open"></i>Parcelas que vão cair <strong>${fmt(up)}</strong></span>` : ''}
+        ${avg ? `<span><i class="sw sw-mark"></i>Média das faturas <strong>${fmt(avg)}</strong></span>` : ''}
+      </div>
+      ${o?.dueDate ? `<p class="muted small" style="margin:8px 0 0">Vence ~${brDate(o.dueDate)} · ${o.txCount || 0} lançamento(s)</p>` : ''}
+    </div>
+    <div class="bh-side">
+      <div class="kpi"><div class="label">Próxima a pagar</div>${next
+        ? `<div class="value">${fmt(next.total)}</div><div class="hint ${daysUntil(next.dueDate) <= 3 ? 'neg' : ''}">vence ${inDays(daysUntil(next.dueDate))} · ${brDate(next.dueDate)}${next.minimum ? ` · mínimo ${fmt(next.minimum)}` : ''}</div>`
+        : '<div class="value-sm"><span class="ok-dot" aria-hidden="true">✓</span> Nada a pagar</div><div class="hint">nenhuma fatura fechada a vencer</div>'}</div>
+      ${a.creditLimit ? `<div class="kpi"><div class="label">Limite disponível</div><div class="value">${fmt(a.availableLimit ?? 0)}</div>
+        <div class="meter"><span style="width:${used}%"></span></div><div class="hint">usado ${fmt(a.balance)} de ${BRL0.format(a.creditLimit)} (inclui parcelas futuras)</div></div>` : ''}
+    </div>`;
 
   // histórico: mais antiga → mais nova, aberta no fim
   const hist = [...c.bills].reverse();
@@ -482,14 +524,15 @@ function renderBills() {
   }, !rows.length);
 
   const all = o ? [o, ...c.bills] : c.bills;
+  $('#bill-pick').innerHTML = all.map((b) => `<option value="${esc(b.id)}"${b.id === state.billSel ? ' selected' : ''}>${b.id === 'open' ? 'Fatura aberta' : `Venc. ${brDate(b.dueDate)} · ${fmt(b.total)}`}</option>`).join('');
   $('#bills-body').innerHTML = all.map((b) => {
     const st = billStatus(b), est = b.id === 'open' ? '~' : '';
     return `<tr data-bill="${b.id}" class="${b.id === state.billSel ? 'sel' : ''}">
       <td class="date">${b.dueDate ? est + brDate(b.dueDate) : '—'}</td>
-      <td class="date">${b.closeDate ? est + brDate(b.closeDate) : '—'}</td>
+      <td class="date opt">${b.closeDate ? est + brDate(b.closeDate) : '—'}</td>
       <td><span class="status ${st.cls}">${st.text}</span></td>
-      <td class="num">${b.txCount}</td>
-      <td class="num">${b.minimum != null ? fmt(b.minimum) : '—'}</td>
+      <td class="num opt">${b.txCount}</td>
+      <td class="num opt">${b.minimum != null ? fmt(b.minimum) : '—'}</td>
       <td class="num"><strong>${fmt(b.id === 'open' ? openTotal(b) : b.total)}</strong>${b.id === 'open' ? ' <span class="chip">parcial</span>' : ''}</td></tr>`;
   }).join('');
   renderGoal(c);
@@ -500,6 +543,7 @@ function renderBills() {
 
 function selectBill(id) {
   state.billSel = id;
+  $('#bill-pick').value = id;
   document.querySelectorAll('#bills-body tr').forEach((tr) => tr.classList.toggle('sel', tr.dataset.bill === id));
   loadBillDetail();
 }
@@ -509,7 +553,7 @@ async function loadBillDetail() {
   const b = state.billSel === 'open' ? c?.open : c?.bills.find((x) => x.id === state.billSel);
   if (!b) { $('#bill-detail').hidden = true; return; }
   $('#bill-detail').hidden = false;
-  $('#bill-detail-title').textContent = b.id === 'open' ? 'Fatura aberta' : `Fatura com vencimento em ${brDate(b.dueDate)}`;
+  $('#bill-detail-title').textContent = 'O que tem na fatura';
   $('#bill-detail-sub').textContent = b.closeDate ? `fechamento ${b.id === 'open' ? '~' : ''}${brDate(b.closeDate)}` : '';
   $('#bill-tx-body').innerHTML = '<tr><td colspan="4" class="muted">Carregando…</td></tr>';
   const key = `${state.billCard}|${b.id}`;
@@ -522,13 +566,13 @@ async function loadBillDetail() {
   const sum = tx.reduce((s, t) => s + (G.isCardPayment(t) ? 0 : t.direction === 'out' ? t.amount : -t.amount), 0);
   const hasPay = tx.some(G.isCardPayment);
   $('#bill-tx-body').innerHTML = tx.map((t) => G.isCardPayment(t) ? `<tr class="muted">
-      <td class="date">${brDate(t.date)}</td>
-      <td class="desc">${esc(t.description)} <span class="chip">pagamento</span></td>
-      <td></td>
+      <td class="date" title="${brDate(t.date)}">${shortDate(t.date)}</td>
+      <td class="desc">${D(t)} <span class="chip">pagamento</span></td>
+      <td class="cat"></td>
       <td class="num">${fmt(t.amount)}</td></tr>` : `<tr>
-      <td class="date">${brDate(t.date)}</td>
-      <td class="desc">${esc(t.description)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}${shareChip(t)}</td>
-      <td>${catChip(t)}</td>
+      <td class="date" title="${brDate(t.date)}">${shortDate(t.date)}</td>
+      <td class="desc">${D(t)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}${shareChip(t)}</td>
+      <td class="cat">${catChip(t)}</td>
       <td class="num ${t.direction === 'in' ? 'pos' : ''}">${t.direction === 'in' ? '−' : ''}${fmt(t.amount)}</td></tr>`).join('')
     || '<tr><td colspan="4" class="muted">Nenhum lançamento.</td></tr>';
   const up = b.id === 'open' ? (b.upcoming || []) : [];
@@ -536,10 +580,15 @@ async function loadBillDetail() {
   if (up.length) {
     $('#bill-tx-body').insertAdjacentHTML('afterbegin', up.map((u) => `<tr class="predicted">
       <td class="date">prevista</td>
-      <td class="desc">${esc(u.description)} <span class="chip">${u.installment}</span>${shareChip(upTx(u), 'data-share-up')}<small>compra em ${u.purchaseDate ? brDate(u.purchaseDate) : '—'}</small></td>
-      <td>${catChip(upTx(u), 'data-cat-up')}</td>
+      <td class="desc">${D(u)} <span class="chip">${u.installment}</span>${shareChip(upTx(u), 'data-share-up')}<small>compra em ${u.purchaseDate ? brDate(u.purchaseDate) : '—'}</small></td>
+      <td class="cat">${catChip(upTx(u), 'data-cat-up')}</td>
       <td class="num">${fmt(u.amount)}</td></tr>`).join(''));
   }
+  // lista longa: mostra as primeiras linhas e um botão para abrir o resto (sem rolagem dentro da página)
+  const nRows = $('#bill-tx-body').children.length;
+  $('#bill-tx-body').classList.toggle('clip', nRows > BILL_ROWS);
+  $('#btn-bill-more').hidden = nRows <= BILL_ROWS;
+  $('#btn-bill-more').textContent = `Mostrar todos os ${nRows} lançamentos`;
   $('#bill-tx-total').textContent = up.length ? `${fmt(sum)} + ${fmt(up.reduce((s, u) => s + u.amount, 0))} previstas` : fmt(sum);
   $('#bill-tx-note').textContent = b.id === 'open'
     ? (up.length ? `As ${up.length} linhas "prevista" são próximas parcelas de compras que estavam na última fatura; o valor é o da parcela anterior. ` : '')
@@ -555,6 +604,8 @@ async function loadBillDetail() {
   renderBillCatChart();
 }
 
+const BILL_ROWS = 10;
+$('#btn-bill-more').addEventListener('click', (e) => { $('#bill-tx-body').classList.remove('clip'); e.currentTarget.hidden = true; });
 const OTHER_CAT = '__outros';
 function renderBillCatChart() {
   const cats = state.billCats || [];
@@ -595,9 +646,9 @@ function renderBillCatDetail() {
     .sort((a, b) => b.amount - a.amount);
   $('#bill-cat-title').textContent = `${cat === OTHER_CAT ? 'Outros' : catName(cat)} · ${rows.length} ${rows.length === 1 ? 'gasto' : 'gastos'}`;
   $('#bill-cat-body').innerHTML = rows.map((t) => `<tr>
-      <td class="date">${brDate(t.date)}</td>
-      <td class="desc">${esc(t.description)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}${shareChip(t)}</td>
-      <td>${catChip(t)}</td>
+      <td class="date" title="${brDate(t.date)}">${shortDate(t.date)}</td>
+      <td class="desc">${D(t)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}${shareChip(t)}</td>
+      <td class="cat">${catChip(t)}</td>
       <td class="num">${fmt(t.amount)}</td></tr>`).join('');
   $('#bill-cat-total').textContent = fmt(total);
 }
@@ -640,18 +691,8 @@ function renderGoal(c) {
   const weeks = weeklySpend(id);
   const past = weeks.slice(0, -1).slice(-4);
   const avg = past.length ? past.reduce((s, w) => s + Math.max(0, w.spent), 0) / past.length : 0;
-  const form = $('#goal-form');
-  $('#goal-input').placeholder = avg ? avg.toFixed(2) : '500.00';
-  $('#goal-hint').textContent = avg ? `Sua média nas últimas ${past.length} semanas foi ${fmt(avg)}.` : '';
-  $('#btn-goal-remove').hidden = !goal;
-  $('#btn-goal-edit').hidden = !goal || !form.hidden;
-
-  if (!goal) {
-    form.hidden = false;
-    $('#btn-goal-cancel').hidden = true;
-    $('#goal-body').innerHTML = '';
-  } else {
-    $('#btn-goal-cancel').hidden = false;
+  // o quadro de meta é um só: com meta por fatura, quem desenha é renderMonthlyGoal
+  if (goal && !state.goals[id]?.monthly) {
     const w = weekStatus(id);
     const today = todayLocal();
     const end = addDays(parse(w.start), 6);
@@ -667,17 +708,14 @@ function renderGoal(c) {
     // meta proporcional ao ciclo da fatura aberta
     const lastClose = c.bills.map((b) => b.closeDate).filter(Boolean).sort().at(-1);
     let cycle = '';
-    const m = monthStatus(c);
-    if (m) {
-      cycle = `<div class="wide"><div class="label">Pela meta mensal</div><div class="v">${fmt(Math.max(0, m.untilSunday))} <span class="muted small">até domingo</span></div>
-        <div class="h">${m.untilSunday < left ? `mais apertado que a meta semanal (que ainda permite ${fmt(left)}): vale este limite` : 'a meta semanal é mais apertada: siga ela'}</div></div>`;
-    } else if (lastClose && c.open?.closeDate) {
+    if (lastClose && c.open?.closeDate) {
       const days = Math.round((parse(c.open.closeDate) - parse(lastClose)) / 864e5);
       const cycleGoal = (w.goal * days) / 7;
       const diff = cycleGoal - openTotal(c.open);
       cycle = `<div class="wide"><div class="label">Fatura aberta vs. meta</div><div class="v">${fmt(openTotal(c.open))} <span class="muted small">de ${fmt(cycleGoal)}</span></div>
         <div class="h">${(days / 7).toFixed(1).replace('.', ',')} semanas de ciclo · ${diff >= 0 ? `folga de ${fmt(diff)}` : `${fmt(-diff)} acima`}</div></div>`;
     }
+    $('#goal-title').textContent = 'Meta semanal';
     $('#goal-body').innerHTML = `
       <div class="goal-big">${fmt(w.spent)} <small>de ${fmt(w.goal)} nesta semana</small></div>
       ${w.installments > 0.004 ? `<p class="small muted" style="margin:2px 0 6px">${fmt(w.posted)} lançados + <strong>${fmt(w.installments)}</strong> de parcelas que ainda vão cair (a parte desta semana)</p>` : ''}
@@ -691,114 +729,9 @@ function renderGoal(c) {
         ${cycle}
       </div>`;
   }
-
-  const color = cssVar('--series-2');
-  const opts = baseOptions();
-  opts.interaction = { mode: 'index', intersect: false };
-  opts.plugins.tooltip.callbacks = {
-    title: (it) => { const wk = weeks[it[0].dataIndex]; return `Semana de ${brDate(wk.start)}${it[0].dataIndex === weeks.length - 1 ? ' (em andamento)' : ''}`; },
-    label: (it) => it.datasetIndex === 0
-      ? ` Gasto: ${fmt(it.parsed.y)}${goal ? (it.parsed.y > goal ? ` · ${fmt(it.parsed.y - goal)} acima` : ` · ${fmt(goal - it.parsed.y)} abaixo`) : ''}`
-      : ` Meta: ${fmt(it.parsed.y)}`,
-  };
-  if (!weeks.some((x) => x.start === state.weekSel)) state.weekSel = null;
-  const dim = (i) => state.weekSel && weeks[i].start !== state.weekSel ? color + '55' : color;
-  opts.onClick = (_, els) => {
-    if (!els.length) return;
-    const s = weeks[els[0].index].start;
-    state.weekSel = state.weekSel === s || els[0].index === weeks.length - 1 ? null : s;
-    renderGoal(state.bills.find((x) => x.account.id === state.billCard));
-  };
-  opts.onHover = (e, els) => { e.native.target.style.cursor = els.length ? 'pointer' : 'default'; };
-  const datasets = [{
-    // semana atual: com a parte das parcelas que ainda vão cair (como na meta)
-    type: 'bar', label: 'Gasto', data: weeks.map((x, i) => i === weeks.length - 1 ? Math.max(0, x.spent) + (G.weekStatus(spendTx(id), 1, todayIso(), c)?.installments || 0) : Math.max(0, x.spent)),
-    backgroundColor: weeks.map((_, i) => i === weeks.length - 1 ? stripes(dim(i)) : dim(i)),
-    borderColor: color, borderWidth: weeks.map((_, i) => i === weeks.length - 1 ? 1.5 : 0),
-    borderRadius: 4, borderSkipped: 'start', maxBarThickness: 32, categoryPercentage: 0.7, order: 2,
-  }];
-  if (goal) datasets.push({ type: 'line', label: 'Meta', data: weeks.map(() => goal), borderColor: cssVar('--text-2'), borderWidth: 2, borderDash: [6, 4], pointRadius: 0, pointHoverRadius: 0, order: 1 });
-  setChart('chart-weeks', { type: 'bar', data: { labels: weeks.map((x) => brDate(x.start).slice(0, 5)), datasets }, options: opts }, false);
-  renderWeekDays(id, weeks, goal);
 }
 
-// gastos dia a dia (seg–dom) da semana escolhida no gráfico semanal; padrão: semana atual
 const WEEKDAYS = ['seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom'];
-function renderWeekDays(id, weeks, goal) {
-  const cur = weeks.at(-1);
-  const wk = weeks.find((x) => x.start === state.weekSel) || cur;
-  const isCur = wk === cur;
-  const today = todayIso();
-  const days = Array.from({ length: 7 }, (_, i) => G.isoAddDays(wk.start, i));
-  const byDay = Object.fromEntries(days.map((d) => [d, { spent: 0, count: 0 }]));
-  for (const t of spendTx(id)) if (byDay[t.date]) { byDay[t.date].spent += t.net; if (t.out) byDay[t.date].count++; }
-  const daily = goal ? goal / 7 : null;
-  $('#week-days-title').textContent = `Gastos por dia · ${isCur ? 'semana atual' : `semana de ${brDate(wk.start).slice(0, 5)}`}`;
-  $('#btn-week-days-reset').hidden = isCur;
-  const color = cssVar('--series-2');
-  const opts = baseOptions();
-  opts.interaction = { mode: 'index', intersect: false };
-  opts.plugins.tooltip.callbacks = {
-    title: (it) => `${WEEKDAYS[it[0].dataIndex]}, ${brDate(days[it[0].dataIndex])}${days[it[0].dataIndex] === today ? ' (hoje)' : ''}`,
-    label: (it) => {
-      if (it.datasetIndex === 1) return ` Meta diária: ${fmt(it.parsed.y)}`;
-      const d = byDay[days[it.dataIndex]];
-      return ` Gasto: ${fmt(d.spent)} · ${d.count} compra(s)${daily ? (d.spent > daily ? ` · ${fmt(d.spent - daily)} acima` : '') : ''}`;
-    },
-  };
-  if (!days.includes(state.weekDaySel) || state.weekDaySel > today) state.weekDaySel = null;
-  const sel = state.weekDaySel;
-  const dim = (d) => sel && d !== sel ? color + '55' : color;
-  opts.onClick = (_, els) => {
-    if (!els.length || days[els[0].index] > today) return;
-    const d = days[els[0].index];
-    state.weekDaySel = state.weekDaySel === d ? null : d;
-    renderWeekDays(id, weeks, goal);
-    if (state.weekDaySel) $('#week-day-detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  };
-  opts.onHover = (e, els) => { e.native.target.style.cursor = els.length && days[els[0].index] <= today ? 'pointer' : 'default'; };
-  const datasets = [{
-    type: 'bar', label: 'Gasto',
-    data: days.map((d) => d > today ? null : Math.max(0, byDay[d].spent)),
-    backgroundColor: days.map((d) => d === today ? stripes(dim(d)) : dim(d)),
-    borderColor: color, borderWidth: days.map((d) => d === today ? 1.5 : 0),
-    borderRadius: 4, borderSkipped: 'start', maxBarThickness: 32, categoryPercentage: 0.7, order: 2,
-  }];
-  if (daily) datasets.push({ type: 'line', label: 'Meta diária', data: days.map(() => daily), borderColor: cssVar('--text-2'), borderWidth: 2, borderDash: [6, 4], pointRadius: 0, pointHoverRadius: 0, order: 1 });
-  setChart('chart-week-days', { type: 'bar', data: { labels: days.map((d, i) => `${WEEKDAYS[i]} ${d.slice(8)}`), datasets }, options: opts }, false);
-  const spent = days.reduce((s, d) => s + byDay[d].spent, 0);
-  const elapsed = isCur ? G.daysBetween(wk.start, today) + 1 : 7;
-  const top = days.filter((d) => d <= today).sort((a, b) => byDay[b].spent - byDay[a].spent)[0];
-  $('#week-days-note').textContent = spent > 0
-    ? `Média de ${fmt(spent / elapsed)}/dia${daily ? ` (meta: ${fmt(daily)}/dia)` : ''} · maior gasto: ${WEEKDAYS[days.indexOf(top)]} ${brDate(top).slice(0, 5)}, ${fmt(byDay[top].spent)}. Clique numa semana acima para ver os dias dela.`
-    : 'Nenhum gasto nesta semana. Clique numa semana acima para ver os dias dela.';
-  renderWeekDayDetail(id, sel);
-}
-
-// compras do dia clicado (mesmos lançamentos que somam na barra: sem pagamento de fatura, estorno abate)
-function renderWeekDayDetail(id, day) {
-  $('#week-day-detail').hidden = !day;
-  if (!day) return;
-  const rows = state.weekTx.filter((t) => t.accountId === id && t.date === day && !G.isCardPayment(t))
-    .map((t) => ({ t, v: t.direction === 'out' ? (t.myAmount ?? t.amount) : -t.amount }))
-    .sort((a, b) => b.v - a.v);
-  const dow = WEEKDAYS[(parse(day).getDay() + 6) % 7];
-  $('#week-day-title').textContent = `${dow}, ${brDate(day)} · ${rows.length} ${rows.length === 1 ? 'lançamento' : 'lançamentos'}`;
-  $('#week-day-body').innerHTML = rows.map(({ t, v }) => `<tr>
-      <td class="desc">${esc(t.description)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}${shareChip(t)}${t.myAmount != null && t.direction === 'out' && t.myAmount !== t.amount ? `<small>total da compra ${fmt(t.amount)}</small>` : ''}</td>
-      <td>${catChip(t)}</td>
-      <td class="num ${v < 0 ? 'pos' : ''}">${v < 0 ? '−' : ''}${fmt(Math.abs(v))}</td></tr>`).join('')
-    || '<tr><td colspan="3" class="muted">Nenhum gasto neste dia.</td></tr>';
-  $('#week-day-total').textContent = fmt(rows.reduce((s, r) => s + r.v, 0));
-}
-$('#btn-week-day-close').addEventListener('click', () => {
-  state.weekDaySel = null;
-  renderGoal(state.bills.find((x) => x.account.id === state.billCard));
-});
-$('#btn-week-days-reset').addEventListener('click', () => {
-  state.weekSel = null;
-  renderGoal(state.bills.find((x) => x.account.id === state.billCard));
-});
 
 // ---------------------------------------------------------------- calendário do mês
 // Mês do calendário (seg–dom) com o gasto de cada dia no cartão; clicar num dia lista os lançamentos.
@@ -821,7 +754,9 @@ async function renderCalendar(c) {
   if (state.calKey !== key) {
     $('#cal-grid').setAttribute('aria-busy', 'true');
     let tx;
-    try { tx = await api(`/api/transactions?from=${first}&to=${last}&accountIds=${id}`); }
+    // semanas inteiras (seg–dom) que o mês toca: o total da semana conta os dias do mês vizinho
+    const from = G.weekStartIso(first), to = G.isoAddDays(G.weekStartIso(last), 6);
+    try { tx = await api(`/api/transactions?from=${from}&to=${to}&accountIds=${id}`); }
     catch (err) { $('#cal-note').textContent = `Não foi possível carregar o mês: ${err.message}`; return; }
     finally { $('#cal-grid').removeAttribute('aria-busy'); }
     // trocou de cartão/mês enquanto carregava: a chamada mais nova desenha
@@ -842,8 +777,9 @@ async function renderCalendar(c) {
   if (!days.includes(state.calDay) || state.calDay > today) state.calDay = null;
 
   const lead = (parse(first).getDay() + 6) % 7; // segunda = 0
-  const head = WEEKDAYS.map((w) => `<div class="cal-h" role="columnheader">${w}</div>`).join('');
-  const blanks = '<div class="cal-blank" aria-hidden="true"></div>'.repeat(lead);
+  const head = WEEKDAYS.map((w) => `<div class="cal-h" role="columnheader">${w}</div>`).join('')
+    + '<div class="cal-h cal-wk-h" role="columnheader">semana</div>';
+  const blank = '<div class="cal-blank" aria-hidden="true"></div>';
   const cells = days.map((d) => {
     const v = byDay[d]?.spent || 0, cnt = byDay[d]?.count || 0, future = d > today;
     const lvl = v > 0 && max > 0 ? Math.max(0.12, v / max) : 0;
@@ -851,32 +787,51 @@ async function renderCalendar(c) {
     const label = `${brDate(d)}: ${future ? 'dia futuro' : v ? `${fmt(v)} em ${cnt} compra(s)` : 'sem gastos'}`;
     return `<button type="button" role="gridcell" class="${cls}" data-day="${d}" style="--lvl:${(lvl * 100).toFixed(0)}%" aria-label="${label}" aria-pressed="${d === state.calDay}"${future ? ' disabled' : ''}>
       <span class="n">${Number(d.slice(8))}</span>${!future && v ? `<span class="v">${v < 0 ? '−' : ''}${NUM0.format(Math.abs(v))}</span>` : ''}</button>`;
-  }).join('');
-  $('#cal-grid').innerHTML = head + blanks + cells;
+  });
+  // total de cada semana (seg–dom) no fim da linha; a semana atual soma a parte das parcelas que ainda vão cair (como na meta)
+  const curWeek = G.weekStartIso(today);
+  const inst = G.weekStatus(spendTx(id), 1, today, c)?.installments || 0;
+  const slots = [...Array(lead).fill(blank), ...cells];
+  while (slots.length % 7) slots.push(blank);
+  let grid = head;
+  for (let r = 0; r < slots.length / 7; r++) {
+    const start = G.isoAddDays(first, 7 * r - lead);
+    if (start > today) { grid += slots.slice(7 * r, 7 * r + 7).join('') + blank; continue; }
+    const wkDays = Array.from({ length: 7 }, (_, i) => G.isoAddDays(start, i));
+    const posted = wkDays.reduce((s, d) => s + (byDay[d]?.spent || 0), 0);
+    const extra = start === curWeek ? inst : 0;
+    const tot = posted + extra;
+    const over = weekly && tot > weekly;
+    const label = `Semana de ${brDate(start).slice(0, 5)} a ${brDate(wkDays[6]).slice(0, 5)}: ${fmt(tot)}${extra > 0.004 ? `, com ${fmt(extra)} de parcelas que ainda vão cair` : ''}${weekly ? (over ? `, ${fmt(tot - weekly)} acima da meta` : `, dentro da meta de ${fmt(weekly)}`) : ''}`;
+    grid += slots.slice(7 * r, 7 * r + 7).join('')
+      + `<div class="cal-wk${over ? ' over' : ''}${start === curWeek ? ' cur' : ''}" role="gridcell" title="${label}" aria-label="${label}"><span class="v">${tot < 0 ? '−' : ''}${NUM0.format(Math.abs(tot))}</span></div>`;
+  }
+  $('#cal-grid').innerHTML = grid;
 
   const past = days.filter((d) => d <= today);
   const total = past.reduce((s, d) => s + (byDay[d]?.spent || 0), 0);
   const top = past.slice().sort((a, b) => (byDay[b]?.spent || 0) - (byDay[a]?.spent || 0))[0];
   const over = daily ? past.filter((d) => (byDay[d]?.spent || 0) > daily).length : 0;
   $('#cal-note').textContent = !past.length ? 'Mês ainda não começou.'
-    : total > 0 ? `Total ${fmt(total)} · média de ${fmt(total / past.length)}/dia · maior gasto: ${brDate(top).slice(0, 5)}, ${fmt(byDay[top].spent)}${daily ? ` · ${over} dia(s) acima da meta diária de ${fmt(daily)} (em vermelho)` : ''}. Clique num dia para ver os lançamentos.`
+    : total > 0 ? `Total ${fmt(total)} · média de ${fmt(total / past.length)}/dia · maior gasto: ${brDate(top).slice(0, 5)}, ${fmt(byDay[top].spent)}${daily ? ` · ${over} dia(s) acima da meta diária de ${fmt(daily)} (em vermelho)` : ''}.`
     : 'Nenhum gasto neste mês.';
   renderCalDay(id, state.calDay);
 }
 
 function renderCalDay(id, day) {
   $('#cal-detail').hidden = !day;
+  $('#cal-empty').hidden = !!day;
   if (!day) return;
   const rows = state.calTx.filter((t) => t.accountId === id && t.date === day && !G.isCardPayment(t))
     .map((t) => ({ t, v: t.direction === 'out' ? (t.myAmount ?? t.amount) : -t.amount }))
     .sort((a, b) => b.v - a.v);
   const dow = WEEKDAYS[(parse(day).getDay() + 6) % 7];
   $('#cal-day-title').textContent = `${dow}, ${brDate(day)} · ${rows.length} ${rows.length === 1 ? 'lançamento' : 'lançamentos'}`;
-  $('#cal-day-body').innerHTML = rows.map(({ t, v }) => `<tr>
-      <td class="desc">${esc(t.description)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}${shareChip(t)}${t.myAmount != null && t.direction === 'out' && t.myAmount !== t.amount ? `<small>total da compra ${fmt(t.amount)}</small>` : ''}</td>
-      <td>${catChip(t)}</td>
-      <td class="num ${v < 0 ? 'pos' : ''}">${v < 0 ? '−' : ''}${fmt(Math.abs(v))}</td></tr>`).join('')
-    || '<tr><td colspan="3" class="muted">Nenhum gasto neste dia.</td></tr>';
+  $('#cal-day-body').innerHTML = rows.map(({ t, v }) => `<div class="dl-row">
+      <div class="dl-desc">${D(t)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}
+        <div class="dl-meta">${catChip(t)}${shareChip(t)}</div></div>
+      <div class="dl-val ${v < 0 ? 'pos' : ''}">${v < 0 ? '−' : ''}${fmt(Math.abs(v))}${t.myAmount != null && t.direction === 'out' && t.myAmount !== t.amount ? `<small>de ${fmt(t.amount)}</small>` : ''}</div></div>`).join('')
+    || '<p class="muted small">Nenhum gasto neste dia.</p>';
   $('#cal-day-total').textContent = fmt(rows.reduce((s, r) => s + r.v, 0));
 }
 
@@ -885,7 +840,8 @@ $('#cal-grid').addEventListener('click', (e) => {
   if (!d) return;
   state.calDay = state.calDay === d ? null : d;
   renderCalendar(calCard());
-  if (state.calDay) $('#cal-detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  // no celular o detalhe fica abaixo do calendário: rola até ele; no desktop já está ao lado
+  if (state.calDay && innerWidth < 1000) $('#cal-detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 });
 const calGo = (ym) => { state.calMonth = ym; state.calDay = null; renderCalendar(calCard()); };
 $('#btn-cal-prev').addEventListener('click', () => calGo(monthShift(state.calMonth || todayIso().slice(0, 7), -1)));
@@ -905,15 +861,9 @@ const monthStatus = (c) => G.monthStatus(c, state.goals[c.account.id]?.monthly, 
 function renderMonthlyGoal(c) {
   const id = c.account.id;
   const goal = state.goals[id]?.monthly;
-  const form = $('#mgoal-form');
-  const recent = c.bills.slice(0, 3);
-  const avg = recent.length ? recent.reduce((s, b) => s + b.total, 0) / recent.length : 0;
-  $('#mgoal-input').placeholder = avg ? avg.toFixed(2) : '2000.00';
-  $('#mgoal-hint').textContent = avg ? `Média das últimas ${recent.length} faturas: ${fmt(avg)}.` : '';
-  $('#btn-mgoal-remove').hidden = !goal;
-  $('#btn-mgoal-edit').hidden = !goal || !form.hidden;
-  $('#btn-mgoal-cancel').hidden = !goal;
-  if (!goal) { form.hidden = false; $('#mgoal-body').innerHTML = ''; }
+  const any = goal || state.goals[id]?.weekly;
+  $('#btn-goal-open').textContent = any ? 'Editar meta' : 'Definir meta';
+  if (!any) { $('#goal-title').textContent = 'Meta'; $('#goal-body').innerHTML = goalEmpty(c); }
 
   const m = monthStatus(c);
   const win = m || cycleWindow(c);
@@ -926,7 +876,12 @@ function renderMonthlyGoal(c) {
       : `<span class="ico ${m.ahead ? '' : 'pos'}">${m.ahead ? '!' : '✓'}</span> ${m.elapsed >= 3 ? `No ritmo atual fecha em ~${fmt(m.projected)}` : m.ahead ? 'Dentro da meta por enquanto' : 'Dentro da meta'} · restam ${fmt(m.remaining)}`;
     const est = m.estimated ? '~' : '';
     const over = m.remaining <= 0;
-    $('#mgoal-body').innerHTML = `
+    // metas antigas podem ter as duas: a semanal aparece como uma linha extra
+    const w = state.goals[id]?.weekly ? weekStatus(id) : null;
+    const weekLine = w ? `<div class="wide"><div class="label">Meta semanal</div><div class="v">${fmt(w.spent)} <span class="muted small">de ${fmt(w.goal)} nesta semana</span></div>
+        <div class="h">${w.goal - w.spent < m.untilSunday ? `mais apertada que a meta por fatura: até domingo vale ${fmt(Math.max(0, w.goal - w.spent))}` : 'a meta por fatura é mais apertada: siga o "até domingo" acima'}</div></div>` : '';
+    $('#goal-title').textContent = 'Meta por fatura';
+    $('#goal-body').innerHTML = `
       <div class="goal-big">${fmt(m.spent)} <small>de ${fmt(m.goal)} ${m.fallback ? 'neste mês' : `no ciclo ${brDate(m.start).slice(0, 5)} – ${est}${brDate(m.end).slice(0, 5)}`}</small></div>
       <div class="goal-meter ${cls}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(100, m.pct).toFixed(0)}"><span style="width:${Math.min(100, m.pct)}%"></span></div>
       <div class="goal-status">${status}</div>
@@ -942,6 +897,7 @@ function renderMonthlyGoal(c) {
         <div><div class="label">Faltam</div><div class="v">${m.daysLeft} dia(s)</div><div class="h">fecha ${est}${brDate(m.end)}</div></div>
         <div><div class="label">Média por dia até agora</div><div class="v ${m.ahead ? 'neg' : ''}">${fmt(m.avgDaily)}${m.ahead ? ' ▲' : ''}</div><div class="h">${m.elapsed} de ${m.total} dias</div></div>
         <div><div class="label">Ritmo da meta</div><div class="v">${fmt(m.goal / m.total)}/dia</div><div class="h">${fmt((m.goal / m.total) * 7)}/semana</div></div>
+        ${weekLine}
       </div>
       ${m.fallback ? '<p class="muted small">Sem faturas fechadas para estimar o ciclo: usando o mês do calendário.</p>' : '<p class="muted small">Dia e semana já descontam o que você gastou e as parcelas previstas: são o máximo para fechar a fatura dentro da meta. Despesas divididas contam só a sua parte.</p>'}`;
   }
@@ -964,62 +920,367 @@ function renderMonthlyGoal(c) {
   setChart('chart-mburn', { type: 'line', data: { labels: days.map((d) => d.slice(8) + '/' + d.slice(5, 7)), datasets }, options: opts }, false);
 }
 
-async function putGoal(body, after) {
-  try {
-    state.goals = await api(`/api/goals/${state.billCard}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    after();
-    const c = state.bills.find((x) => x.account.id === state.billCard);
-    renderGoal(c); renderMonthlyGoal(c); renderBillAlert();
-  } catch (err) { (body.monthly !== undefined ? $('#mgoal-hint') : $('#goal-hint')).textContent = err.message; }
+// ---------------------------------------------------------------- meta (modal)
+// Meta por fatura, por semana ou por dia são o mesmo limite em escalas diferentes. O modal deixa escolher
+// a escala mais natural, mostra o equivalente nas outras e guarda uma meta só: por fatura (mensal) ou semanal.
+// "Por dia" vira meta por fatura: valor × dias do ciclo.
+const round2 = (v) => Math.round(v * 100) / 100;
+const cycleDays = (c) => { const w = cycleWindow(c); return daysBetween(w.start, w.end) + 1; };
+const GOAL_MODES = {
+  monthly: { per: (N) => N, label: 'Quanto quer gastar por fatura (de um fechamento ao outro)?', name: 'por fatura' },
+  weekly: { per: () => 7, label: 'Quanto quer gastar por semana (segunda a domingo)?', name: 'por semana' },
+  daily: { per: () => 1, label: 'Quanto quer gastar por dia, em média?', name: 'por dia' },
+};
+// daily: valor exato por dia; shown: o que o campo mostrava ao converter (se não mudou, vale o exato, sem perder centavos)
+const goalDlg = { card: null, mode: 'monthly', daily: null, shown: null };
+// valor por dia do que está no campo: o exato da última conversão, se o campo não foi editado depois
+function gdDaily() {
+  const raw = $('#gd-input').value, v = Number(raw);
+  if (!(v > 0)) return null;
+  return raw === goalDlg.shown && goalDlg.daily ? goalDlg.daily : v / GOAL_MODES[goalDlg.mode].per(cycleDays(goalDlg.card));
 }
-const closeMForm = () => { $('#mgoal-form').hidden = true; $('#mgoal-input').value = ''; };
-$('#mgoal-form').addEventListener('submit', (e) => { e.preventDefault(); putGoal({ monthly: Number($('#mgoal-input').value) }, closeMForm); });
-$('#btn-mgoal-remove').addEventListener('click', () => putGoal({ monthly: null }, closeMForm));
-$('#btn-mgoal-cancel').addEventListener('click', () => { closeMForm(); renderMonthlyGoal(state.bills.find((x) => x.account.id === state.billCard)); });
-$('#btn-mgoal-edit').addEventListener('click', () => {
-  $('#mgoal-form').hidden = false; $('#btn-mgoal-edit').hidden = true;
-  $('#mgoal-input').value = state.goals[state.billCard]?.monthly ?? ''; $('#mgoal-input').focus();
+function gdSet(daily) {
+  goalDlg.daily = daily;
+  goalDlg.shown = daily ? String(round2(daily * GOAL_MODES[goalDlg.mode].per(cycleDays(goalDlg.card)))) : '';
+  $('#gd-input').value = goalDlg.shown;
+}
+
+function goalSuggestions(c) {
+  const recent = c.bills.slice(0, 3);
+  const weeks = weeklySpend(c.account.id).slice(0, -1).slice(-4);
+  return {
+    monthly: recent.length ? { v: recent.reduce((s, b) => s + b.total, 0) / recent.length, t: `média das últimas ${recent.length} faturas` } : null,
+    weekly: weeks.length ? { v: weeks.reduce((s, w) => s + Math.max(0, w.spent), 0) / weeks.length, t: `sua média nas últimas ${weeks.length} semanas` } : null,
+  };
+}
+
+// quadro sem meta: convida a definir, sugerindo a média das últimas faturas (ou semanas)
+function goalEmpty(c) {
+  const sgs = goalSuggestions(c);
+  const kind = sgs.monthly ? 'monthly' : 'weekly';
+  const sg = sgs[kind];
+  return `<div class="goal-empty-box">
+    <p>Sem meta neste cartão. Com uma meta, você vê quanto ainda pode gastar por dia e se está no ritmo.</p>
+    <div class="btn-row"><button type="button" class="btn" data-goal-dlg>Definir meta</button>
+      ${sg ? `<button type="button" class="btn ghost" data-goal-dlg="${kind}" data-goal-value="${sg.v.toFixed(2)}">Começar pela média: ${fmt(sg.v)}${kind === 'weekly' ? '/semana' : ''}</button>` : ''}</div>
+    ${sg ? `<p class="muted small">Sugestão: ${esc(sg.t)}.</p>` : ''}
+  </div>`;
+}
+
+function openGoalDialog(id, mode, value) {
+  const c = state.bills.find((x) => x.account.id === id);
+  if (!c) return;
+  const g = state.goals[id] || {};
+  const N = cycleDays(c);
+  goalDlg.card = c;
+  goalDlg.mode = mode || (g.monthly ? 'monthly' : g.weekly ? 'weekly' : 'monthly');
+  const per = GOAL_MODES[goalDlg.mode].per(N);
+  gdSet(value != null ? Number(value) / per : g.monthly ? g.monthly / N : g.weekly ? g.weekly / 7 : null);
+  $('#gd-card').textContent = `· ${c.account.name}`;
+  const w = cycleWindow(c);
+  $('#gd-cycle').textContent = w.fallback ? `Sem faturas fechadas: o ciclo considerado é o mês do calendário (${N} dias).`
+    : `Ciclo da fatura atual: ${brDate(w.start).slice(0, 5)} a ${w.estimated ? '~' : ''}${brDate(w.end).slice(0, 5)} (${N} dias).`;
+  $('#gd-msg').textContent = '';
+  $('#btn-gd-remove').hidden = !g.monthly && !g.weekly;
+  renderGoalDialog();
+  if (!$('#dlg-goal').open) $('#dlg-goal').showModal();
+  $('#gd-input').focus(); $('#gd-input').select();
+}
+
+function renderGoalDialog() {
+  const c = goalDlg.card, N = cycleDays(c), mode = goalDlg.mode;
+  const g = state.goals[c.account.id] || {};
+  document.querySelectorAll('#gd-mode button').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+  $('#gd-label').textContent = GOAL_MODES[mode].label;
+  const daily = gdDaily();
+  $('#gd-eq').innerHTML = Object.entries(GOAL_MODES).map(([k, m]) => `<div class="${k === mode ? 'on' : ''}">
+      <div class="label">${k === 'monthly' ? 'Por fatura' : k === 'weekly' ? 'Por semana' : 'Por dia'}</div>
+      <div class="v">${daily ? fmt(daily * m.per(N)) : '—'}</div></div>`).join('');
+  const sg = goalSuggestions(c);
+  $('#gd-sugg').innerHTML = [['monthly', sg.monthly], ['weekly', sg.weekly]].filter(([, x]) => x)
+    .map(([k, x]) => `<button type="button" class="chip" data-gd-sugg="${k}" data-v="${x.v.toFixed(2)}">${esc(x.t[0].toUpperCase() + x.t.slice(1))}: ${fmt(x.v)}</button>`).join('');
+  const notes = {
+    monthly: 'Vale de um fechamento ao outro; as parcelas que ainda vão cair na fatura já contam.',
+    weekly: 'Cada semana começa do zero na segunda-feira.',
+    daily: `Guardada como meta por fatura: ${daily ? fmt(daily * N) : 'o valor'} no ciclo de ${N} dias.`,
+  };
+  const both = g.monthly && g.weekly ? ` Hoje há duas metas (${fmt(g.monthly)} por fatura e ${fmt(g.weekly)} por semana): ao salvar, fica só esta.` : '';
+  $('#gd-note').textContent = notes[mode] + both;
+}
+
+$('#gd-mode').addEventListener('click', (e) => {
+  const m = e.target.closest('[data-mode]')?.dataset.mode;
+  if (!m || m === goalDlg.mode) return;
+  const daily = gdDaily();
+  goalDlg.mode = m;
+  if (daily) gdSet(daily);
+  renderGoalDialog();
+});
+$('#gd-input').addEventListener('input', renderGoalDialog);
+$('#gd-sugg').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-gd-sugg]');
+  if (!b) return;
+  goalDlg.mode = b.dataset.gdSugg;
+  gdSet(Number(b.dataset.v) / GOAL_MODES[goalDlg.mode].per(cycleDays(goalDlg.card)));
+  renderGoalDialog();
 });
 
-$('#btn-goal-edit').addEventListener('click', () => {
-  $('#goal-form').hidden = false;
-  $('#btn-goal-edit').hidden = true;
-  $('#goal-input').value = state.goals[state.billCard]?.weekly ?? '';
-  $('#goal-input').focus();
-});
-$('#btn-goal-cancel').addEventListener('click', () => { $('#goal-form').hidden = true; renderGoal(state.bills.find((x) => x.account.id === state.billCard)); });
-function saveGoal(weekly) {
-  return putGoal({ weekly }, () => { $('#goal-form').hidden = true; $('#goal-input').value = ''; });
+async function putGoal(id, body) {
+  state.goals = await api(`/api/goals/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const c = calCard();
+  if (c) { renderGoal(c); renderMonthlyGoal(c); }
+  renderBillAlert(); renderToday();
 }
-$('#goal-form').addEventListener('submit', (e) => { e.preventDefault(); saveGoal(Number($('#goal-input').value)); });
-$('#btn-goal-remove').addEventListener('click', () => saveGoal(null));
+$('#goal-dlg-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const daily = gdDaily();
+  if (!daily) { $('#gd-msg').textContent = 'Informe um valor maior que zero.'; return; }
+  const N = cycleDays(goalDlg.card);
+  const body = goalDlg.mode === 'weekly' ? { weekly: round2(daily * 7), monthly: null } : { monthly: round2(daily * N), weekly: null };
+  try { await putGoal(goalDlg.card.account.id, body); $('#dlg-goal').close(); }
+  catch (err) { $('#gd-msg').textContent = err.message; }
+});
+$('#btn-gd-remove').addEventListener('click', async () => {
+  if (!confirm(`Remover a meta do ${goalDlg.card.account.name}?`)) return;
+  try { await putGoal(goalDlg.card.account.id, { monthly: null, weekly: null }); $('#dlg-goal').close(); }
+  catch (err) { $('#gd-msg').textContent = err.message; }
+});
+$('#btn-gd-cancel').addEventListener('click', () => $('#dlg-goal').close());
+$('#btn-goal-open').addEventListener('click', () => openGoalDialog(state.billCard));
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-goal-dlg]');
+  if (b) openGoalDialog(state.billCard, b.dataset.goalDlg || undefined, b.dataset.goalValue);
+});
 
 $('#card-select').addEventListener('click', (e) => {
   const id = e.target.dataset.card;
   if (!id || id === state.billCard) return;
   state.billCard = id; state.billSel = 'open';
-  $('#goal-form').hidden = true;
-  $('#mgoal-form').hidden = true;
   renderBills();
 });
-$('#mgoal-body').addEventListener('click', (e) => {
+$('#goal-body').addEventListener('click', (e) => {
   if (e.target.id !== 'see-upcoming') return;
   e.preventDefault();
   selectBill('open');
   $('#bill-detail').scrollIntoView({ behavior: 'smooth' });
 });
-$('#bills-body').addEventListener('click', (e) => { const id = e.target.closest('tr')?.dataset.bill; if (id) selectBill(id); });
+$('#bills-body').addEventListener('click', (e) => { const id = e.target.closest('tr')?.dataset.bill; if (id) { selectBill(id); $('#bill-detail').scrollIntoView({ behavior: 'smooth', block: 'start' }); } });
+$('#bill-pick').addEventListener('change', (e) => selectBill(e.target.value));
 
-function setView(v) {
+// Navegação por hash (#hoje, #visao-geral, #faturas): o Voltar do navegador/celular volta à aba anterior.
+const VIEW_HASH = { today: '#hoje', overview: '#visao-geral', bills: '#faturas' };
+const viewFromHash = () => Object.keys(VIEW_HASH).find((k) => VIEW_HASH[k] === location.hash) || 'today';
+function setView(v, { push = true } = {}) {
+  const changed = state.view !== v;
   state.view = v;
-  document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.view === v)));
-  $('#view-overview').hidden = v !== 'overview';
-  $('#view-bills').hidden = v !== 'bills';
-  history.replaceState(null, '', v === 'bills' ? '#faturas' : location.pathname + location.search);
-  if (v === 'bills' && state.accounts.length) renderBills();
-  if (v === 'overview' && state.accounts.length) renderCharts(periodTx());
+  document.querySelectorAll('.tabs [data-view]').forEach((b) => {
+    if (b.dataset.view === v) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
+  for (const k of Object.keys(VIEW_HASH)) $(`#view-${k}`).hidden = k !== v;
+  if (push && location.hash !== VIEW_HASH[v]) history.pushState(null, '', VIEW_HASH[v]);
+  if (changed) window.scrollTo({ top: 0 });
+  if (!state.accounts.length) return;
+  if (v === 'bills') renderBills();
+  if (v === 'overview') renderCharts(periodTx());
+  if (v === 'today') renderToday();
 }
-document.querySelector('.tabs').addEventListener('click', (e) => { if (e.target.dataset.view) setView(e.target.dataset.view); });
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a[data-view]');
+  if (!a || e.ctrlKey || e.metaKey) return;
+  e.preventDefault();
+  setView(a.dataset.view);
+});
+window.addEventListener('popstate', () => setView(viewFromHash(), { push: false }));
+
+// abre a aba Faturas num cartão
+function openCard(id) {
+  state.billCard = id; state.billSel = 'open';
+  setView('bills');
+}
+
+// ---------------------------------------------------------------- hoje
+// O mesmo que o /resumo do bot: quanto ainda pode gastar hoje em cada cartão (pela meta mais apertada),
+// como está a semana e o ciclo da fatura, e os últimos gastos para categorizar/dividir.
+const WEEKDAY_FULL = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+function syncAgo(ts) {
+  const min = Math.round((Date.now() - new Date(ts)) / 6e4);
+  if (min < 1) return 'agora';
+  if (min < 60) return `há ${min} min`;
+  if (min < 24 * 60) return `há ${Math.round(min / 60)} h`;
+  return `em ${new Date(ts).toLocaleDateString('pt-BR')}`;
+}
+// cartões que importam no dia a dia: com fatura, lançamentos ou meta
+const activeCards = () => state.bills.filter((c) => c.account && (c.error || c.bills.length || c.open?.txCount
+  || state.goals[c.account.id]?.weekly || state.goals[c.account.id]?.monthly));
+
+// barra do período: gasto vs. meta, com a marca de onde deveria estar hoje no ritmo da meta
+function paceBar(spent, goal, expected) {
+  const max = Math.max(goal, spent) || 1;
+  const cls = spent > goal ? 'over' : spent > expected ? 'warn' : '';
+  return `<div class="pbar ${cls}" role="progressbar" aria-valuemin="0" aria-valuemax="${goal.toFixed(0)}" aria-valuenow="${spent.toFixed(0)}">
+    <span class="fill" style="width:${(Math.min(spent, max) / max) * 100}%"></span>
+    ${goal < max ? `<i class="goal" style="left:${(goal / max) * 100}%"></i>` : ''}
+    <i class="exp" style="left:${(Math.min(expected, max) / max) * 100}%" title="Ritmo da meta até hoje: ${fmt(expected)}"></i></div>`;
+}
+
+// últimos 7 dias em barras (HTML puro): mostra o padrão de gasto num relance
+function weekBars(items, today, dailyGoal) {
+  const days = Array.from({ length: 7 }, (_, i) => G.isoAddDays(today, i - 6));
+  const v = days.map((d) => Math.max(0, items.filter((t) => t.date === d).reduce((s, t) => s + t.net, 0)));
+  const max = Math.max(dailyGoal || 0, ...v, 1);
+  const wd = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+  return `<div class="wbars" role="img" aria-label="Gasto nos últimos 7 dias: ${days.map((d, i) => `${brDate(d).slice(0, 5)} ${fmt(v[i])}`).join(', ')}">
+    ${dailyGoal ? `<i class="wline" style="bottom:${(dailyGoal / max) * 100}%" title="Meta por dia: ${fmt(dailyGoal)}"></i>` : ''}
+    ${days.map((d, i) => `<div class="wb ${d === today ? 'today' : ''} ${dailyGoal && v[i] > dailyGoal ? 'over' : ''}">
+      <span class="wv">${v[i] ? NUM0.format(v[i]) : ''}</span>
+      <span class="wcol"><span style="height:${(v[i] / max) * 100}%"></span></span>
+      <span class="wd">${d === today ? 'hoje' : wd[parse(d).getDay()]}</span></div>`).join('')}
+  </div>`;
+}
+
+function renderToday() {
+  const today = todayIso();
+  const d = todayLocal();
+  const wdName = WEEKDAY_FULL[d.getDay()];
+  $('#today-title').textContent = `${wdName[0].toUpperCase()}${wdName.slice(1)}, ${d.getDate()} de ${MONTHS_FULL[d.getMonth()]}`;
+  $('#today-sub').textContent = state.lastSync ? `Dados sincronizados ${syncAgo(state.lastSync)}` : '';
+  const yesterday = G.isoAddDays(today, -1);
+
+  const cards = activeCards();
+  $('#today-cards').innerHTML = cards.map((c) => {
+    const a = c.account, id = a.id;
+    const inst = instLabel(a);
+    const head = `<header class="tc-head"><div><span class="tc-name">${esc(a.name)}</span>${inst ? ` <span class="muted small">${esc(inst)}</span>` : ''}</div>
+      <button type="button" class="btn ghost" data-open-card="${esc(id)}">Fatura <span aria-hidden="true">→</span></button></header>`;
+    if (c.error) return `<article class="today-card">${head}<p class="neg small">Não foi possível ler as faturas: ${esc(c.error)}</p></article>`;
+    const items = spendTx(id);
+    const week = weekStatus(id), month = monthStatus(c);
+    const al = G.todayAllowance(items, today, { week, month });
+    const o = c.open;
+    const closeIn = o?.closeDate ? Math.max(0, daysUntil(o.closeDate)) : null;
+    const ontem = items.filter((t) => t.date === yesterday).reduce((s, t) => s + t.net, 0);
+    const spentToday = Math.max(0, al.spentToday);
+    const daily = month ? month.goalDaily : week ? week.goalDaily : null;
+
+    if (!week && !month) {
+      // sem meta: o número que importa é a fatura aberta; hoje/7 dias/limite ficam nos blocos menores
+      const since = G.isoAddDays(today, -6);
+      const last7 = items.filter((t) => t.date >= since).reduce((s, t) => s + t.net, 0);
+      const tiles = [
+        `<div class="tc-tile"><div class="label">Hoje</div><div class="v">${fmt(spentToday)}</div><div class="h">${ontem > 0.004 ? `ontem ${fmt(ontem)}` : 'nada ontem'}</div></div>`,
+        `<div class="tc-tile"><div class="label">Últimos 7 dias</div><div class="v">${fmt(Math.max(0, last7))}</div><div class="h">${fmt(Math.max(0, last7) / 7)}/dia</div></div>`,
+        a.creditLimit ? `<div class="tc-tile"><div class="label">Limite livre</div><div class="v">${BRL0.format(a.availableLimit ?? 0)}</div><div class="h">de ${BRL0.format(a.creditLimit)}</div></div>` : '',
+      ].join('');
+      return `<article class="today-card">${head}
+        <div class="tc-hero"><div class="label">Fatura aberta</div><div class="tc-big">${fmt(openTotal(o))}</div>
+          <div class="muted small">${o?.closeDate ? `fecha ${inDays(closeIn)} · ${brDate(o.closeDate).slice(0, 5)}` : 'nenhuma fatura aberta'}${o?.txCount ? ` · ${o.txCount} lançamento(s)` : ''}</div></div>
+        <div class="tc-tiles">${tiles}</div>
+        ${last7 > 0.004 ? `<div class="tc-chart"><div class="tc-cycle-top"><span>Últimos 7 dias</span></div>${weekBars(items, today, null)}</div>` : ''}
+        <div class="tc-cta"><span class="small">Defina uma meta para ver quanto pode gastar por dia.</span>
+          <button type="button" class="btn ghost sm" data-goal-card="${esc(id)}">Definir meta</button></div>
+      </article>`;
+    }
+
+    const useWeek = week && (!month || al.week < al.month);
+    const limit = useWeek ? al.week : al.month;
+    const left = limit - al.spentToday;
+    // até domingo: meta semanal; sem ela, a parte da semana na meta mensal
+    const wk = week ? { left: week.remaining, of: week.goal } : { left: Math.min(month.untilSunday, month.remaining), of: month.weekBudget };
+    const tiles = [
+      `<div class="tc-tile"><div class="label">Até domingo</div><div class="v ${wk.left < 0 ? 'neg' : ''}">${wk.left < 0 ? '−' : ''}${fmt(Math.abs(wk.left))}</div><div class="h">de ${fmt(wk.of)}${week ? '' : ' pela meta mensal'}</div></div>`,
+      month ? `<div class="tc-tile"><div class="label">Até fechar a fatura</div><div class="v ${month.remaining < 0 ? 'neg' : ''}">${month.remaining < 0 ? '−' : ''}${fmt(Math.abs(month.remaining))}</div><div class="h">${month.daysLeft} dia(s) · ${fmt(month.perDay)}/dia</div></div>` : '',
+      `<div class="tc-tile"><div class="label">Fatura aberta</div><div class="v">${fmt(openTotal(o))}</div><div class="h">${o?.closeDate ? `fecha ${inDays(closeIn)}` : 'nenhuma aberta'}</div></div>`,
+    ].join('');
+
+    const p = month || week;
+    const expected = p.goalDaily * p.elapsed;
+    const diff = p.spent - expected;
+    const barTitle = month ? `Ciclo ${brDate(month.start).slice(0, 5)} – ${month.estimated ? '~' : ''}${brDate(month.end).slice(0, 5)}` : `Semana ${brDate(week.start).slice(0, 5)} – ${brDate(week.end).slice(0, 5)}`;
+    const verdict = p.spent > p.goal ? `<span class="neg">meta estourada em ${fmt(p.spent - p.goal)}</span>`
+      : diff > 0.5 ? `<span class="neg">${fmt(diff)} acima do ritmo</span>${month && month.elapsed >= 3 ? ` · nesse passo fecha em ~${fmt(month.projected)}` : ''}`
+      : `<span class="pos">${fmt(-diff)} abaixo do ritmo</span>`;
+
+    return `<article class="today-card ${left < 0 ? 'is-over' : ''}">${head}
+      <div class="tc-hero">
+        <div class="label">${left >= 0 ? 'Pode gastar hoje' : 'Passou do limite de hoje'}</div>
+        <div class="tc-big ${left < 0 ? 'neg' : ''}">${fmt(Math.abs(left))}</div>
+        <div class="muted small">gastou ${fmt(spentToday)} hoje${ontem > 0.004 ? ` · ontem ${fmt(ontem)}` : ''}${week && month ? ` · vale a meta ${useWeek ? 'semanal' : 'mensal'} (a mais apertada)` : ''}</div>
+      </div>
+      <div class="tc-tiles">${tiles}</div>
+      <div class="tc-cycle">
+        <div class="tc-cycle-top"><span>${barTitle}</span><span><strong>${fmt(p.spent)}</strong> <span class="muted">de ${fmt(p.goal)}</span></span></div>
+        ${paceBar(p.spent, p.goal, expected)}
+        <div class="small">${verdict}</div>
+      </div>
+      <div class="tc-chart"><div class="tc-cycle-top"><span>Últimos 7 dias</span>${daily ? `<span class="muted small">linha = ${fmt(daily)}/dia da meta</span>` : ''}</div>${weekBars(items, today, daily)}</div>
+    </article>`;
+  }).join('') || '<p class="muted">Nenhum cartão de crédito com fatura.</p>';
+
+  // faturas fechadas a pagar
+  const due = state.bills.flatMap((c) => c.bills.filter((b) => b.status === 'due').map((b) => ({ c, b })))
+    .sort((x, y) => x.b.dueDate.localeCompare(y.b.dueDate));
+  $('#today-due-panel').hidden = !due.length;
+  $('#today-due').innerHTML = due.map(({ c, b }) => {
+    const n = daysUntil(b.dueDate);
+    return `<li><span class="grow"><strong>${esc(c.account.name)}</strong><br>
+      <span class="small ${n <= 3 ? 'neg' : 'muted'}">vence ${inDays(n)} · ${brDate(b.dueDate)}${b.minimum ? ` · mínimo ${fmt(b.minimum)}` : ''}</span></span><strong class="num">${fmt(b.total)}</strong></li>`;
+  }).join('');
+
+  // quem te deve: toque abre a pessoa para registrar o pagamento
+  const owing = state.people.filter((p) => p.balance > 0.004).sort((x, y) => y.balance - x.balance);
+  $('#today-people-panel').hidden = !owing.length;
+  $('#today-people-total').textContent = fmt(owing.reduce((s, p) => s + p.balance, 0));
+  $('#today-people').innerHTML = owing.map((p) => `<li><button type="button" class="rowbtn" data-person="${esc(p.id)}">
+      <span class="grow"><strong>${esc(p.name)}</strong><br><span class="muted small">${p.items.length} despesa(s) dividida(s)</span></span>
+      <strong class="num">${fmt(p.balance)}</strong><span class="chev" aria-hidden="true">›</span></button></li>`).join('');
+
+  // saldo das contas
+  const banks = state.accounts.filter((a) => a.kind === 'bank');
+  $('#today-balance-panel').hidden = !banks.length;
+  $('#today-balance').innerHTML = banks.map((a) => `<li><span class="grow">${esc(a.name)}<br><span class="muted small">${accLabel(a)}</span></span><strong class="num ${a.balance < 0 ? 'neg' : ''}">${fmt(a.balance)}</strong></li>`).join('');
+
+  // últimos gastos, agrupados por dia, com o total de cada dia
+  const accs = accById();
+  const multi = cards.length > 1;
+  const since = G.isoAddDays(today, -6);
+  const recent = state.weekTx.filter((t) => t.date >= since && !G.isCardPayment(t)).sort((x, y) => y.date.localeCompare(x.date));
+  const byDay = new Map();
+  for (const t of recent) (byDay.get(t.date) || byDay.set(t.date, []).get(t.date)).push(t);
+  const dayName = (s) => s === today ? 'Hoje' : s === yesterday ? 'Ontem' : `${WEEKDAYS[(parse(s).getDay() + 6) % 7]}, ${brDate(s).slice(0, 5)}`;
+  $('#today-recent').innerHTML = [...byDay].map(([day, list]) => {
+    const tot = list.reduce((s, t) => s + (t.direction === 'out' ? (t.myAmount ?? t.amount) : -t.amount), 0);
+    return `<div class="dl-day"><div class="dl-head"><span>${dayName(day)}</span><span>${fmt(tot)}</span></div>
+      ${list.map((t) => {
+        const v = t.direction === 'out' ? (t.myAmount ?? t.amount) : -t.amount;
+        return `<div class="dl-row">
+          <div class="dl-desc">${D(t)}${t.installment ? ` <span class="chip">${t.installment}</span>` : ''}
+            <div class="dl-meta">${multi ? `<span class="dl-acc" style="${accs[t.accountId]?.institutionColor ? `--inst:${accs[t.accountId].institutionColor}` : ''}"><span class="dot"></span>${esc(accs[t.accountId]?.name || '')}</span>` : ''}${catChip(t)}${shareChip(t)}</div></div>
+          <div class="dl-val ${v < 0 ? 'pos' : ''}">${v < 0 ? '+' : ''}${fmt(Math.abs(v))}${t.myAmount != null && t.direction === 'out' && t.myAmount !== t.amount ? `<small>de ${fmt(t.amount)}</small>` : ''}</div>
+        </div>`;
+      }).join('')}</div>`;
+  }).join('') || '<p class="muted small">Nenhum gasto nos cartões nos últimos 7 dias.</p>';
+}
+document.addEventListener('click', (e) => {
+  const p = e.target.closest('[data-person]');
+  if (p) { peopleDlg.sel = p.dataset.person; $('#pay-date').value = ''; openPeople(); }
+});
+document.addEventListener('click', (e) => {
+  const g = e.target.closest('[data-goal-card]');
+  if (g) return openGoalDialog(g.dataset.goalCard);
+  const o = e.target.closest('[data-open-card]');
+  if (o) openCard(o.dataset.openCard);
+});
+
+// menu do topo (no celular vira lista suspensa)
+const menuBtn = $('#btn-menu');
+const closeMenu = () => { document.body.classList.remove('menu-open'); menuBtn.setAttribute('aria-expanded', 'false'); };
+menuBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const open = document.body.classList.toggle('menu-open');
+  menuBtn.setAttribute('aria-expanded', String(open));
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('#btn-menu')) closeMenu(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
 
 // ---------------------------------------------------------------- conexões
 async function openConnections() {
@@ -1150,7 +1411,7 @@ function openCategoryDialog(id, predicted = false) {
   const t = u ? upTx(u) : findTx(id);
   if (!t) return;
   catDlg.tx = t;
-  $('#cat-tx').innerHTML = `<strong>${esc(t.description)}</strong> · ${t.predicted ? 'parcela prevista' : brDate(t.date)} · ${t.direction === 'in' ? '+' : '−'}${fmt(t.amount)}${t.installment ? ` · parcela ${t.installment}` : ''}`;
+  $('#cat-tx').innerHTML = `<strong>${D(t)}</strong> · ${t.predicted ? 'parcela prevista' : brDate(t.date)} · ${t.direction === 'in' ? '+' : '−'}${fmt(t.amount)}${t.installment ? ` · parcela ${t.installment}` : ''}`;
   $('#cat-select').innerHTML = categoryOptions(t.category);
   $('#cat-new').value = ''; $('#cat-msg').textContent = '';
   const key = ruleKey(t.description);
@@ -1289,7 +1550,7 @@ function openShareDialog(id, predicted = false) {
   const t = u ? upTx(u) : findTx(id);
   if (!t) return;
   shareDlg.tx = t;
-  $('#share-tx').innerHTML = `<strong>${esc(t.description)}</strong> · ${t.predicted ? 'parcela prevista' : brDate(t.date)} · ${fmt(t.amount)}${t.installment ? ` · parcela ${t.installment}` : ''}`;
+  $('#share-tx').innerHTML = `<strong>${D(t)}</strong> · ${t.predicted ? 'parcela prevista' : brDate(t.date)} · ${fmt(t.amount)}${t.installment ? ` · parcela ${t.installment}` : ''}`;
   $('#share-rows').innerHTML = (t.shares || [{ personId: state.people.length === 1 ? state.people[0].id : '', amount: '' }]).map((x) => shareRow(x.personId, x.amount)).join('');
   $('#share-scope-box').hidden = !t.purchaseKey;
   $('#share-scope').checked = !t.shares || t.shareScope === 'purchase';
@@ -1391,7 +1652,7 @@ function renderPeople() {
   if (!$('#pay-date').value) $('#pay-date').value = iso(todayLocal());
   $('#pd-items').innerHTML = p.items.map((x) => `<tr>
       <td class="date">${brDate(x.date)}</td>
-      <td class="desc">${esc(x.description)}${x.installment ? ` <span class="chip">${x.installment}</span>` : ''}<small>${esc(accs[x.accountId]?.name || '')}</small></td>
+      <td class="desc">${D(x)}${x.installment ? ` <span class="chip">${x.installment}</span>` : ''}<small>${esc(accs[x.accountId]?.name || '')}</small></td>
       <td class="num">${fmt(x.total)}</td><td class="num"><strong>${fmt(x.amount)}</strong></td></tr>`).join('')
     || '<tr><td colspan="4" class="muted">Nenhuma despesa dividida com esta pessoa.</td></tr>';
   $('#pd-payments').innerHTML = p.payments.map((x) => `<li data-pay="${x.id}"><span class="grow">${brDate(x.date)} · <strong>${fmt(x.amount)}</strong>${x.note ? ` <span class="muted small">${esc(x.note)}</span>` : ''}</span>
@@ -1408,6 +1669,7 @@ async function peopleChanged() {
   state.people = await api('/api/people');
   renderPeople();
   render();
+  renderToday();
   if (state.view === 'bills') renderBills();
 }
 $('#btn-people').addEventListener('click', openPeople);
@@ -1479,7 +1741,7 @@ $('#accounts').addEventListener('click', (e) => {
   render();
 });
 $('#select-all').addEventListener('click', (e) => { e.preventDefault(); state.selected.clear(); render(); });
-['#search', '#cat-filter', '#dir-filter'].forEach((s) => $(s).addEventListener('input', () => { state.shown = PAGE; renderTable(periodTx()); }));
+['#search', '#cat-filter', '#dir-filter'].forEach((s) => $(s).addEventListener('input', () => { state.shown = PAGE; renderTable(periodTx()); if (s === '#cat-filter') renderCharts(periodTx()); }));
 $('#btn-more').addEventListener('click', () => { state.shown += PAGE; renderTable(periodTx()); });
 $('#btn-csv').addEventListener('click', exportCsv);
 $('#btn-refresh').addEventListener('click', () => loadAll(true));
@@ -1488,7 +1750,7 @@ $('#btn-connections').addEventListener('click', openConnections);
 // tema
 function applyTheme(t) {
   if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
-  if (state.accounts.length) { if (state.view === 'bills') renderBills(); else renderCharts(periodTx()); }
+  if (state.accounts.length) { if (state.view === 'bills') renderBills(); else if (state.view === 'overview') renderCharts(periodTx()); }
 }
 $('#btn-theme').addEventListener('click', () => {
   const dark = document.documentElement.dataset.theme
@@ -1520,5 +1782,6 @@ $('#btn-logout').addEventListener('click', async () => {
   location.href = '/login.html';
 });
 
-if (location.hash === '#faturas') setView('bills');
+if (location.hash === '#visao') history.replaceState(null, '', '#visao-geral');
+setView(viewFromHash(), { push: false });
 loadAll();

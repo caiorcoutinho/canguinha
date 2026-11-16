@@ -870,7 +870,8 @@ async function serveStatic(res, pathname) {
   if (!file.startsWith(PUBLIC_DIR)) { res.writeHead(403); return res.end(); }
   try {
     const data = await fs.readFile(file);
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+    // no-cache: o navegador revalida a cada carga, então mudanças no visual aparecem sem limpar o cache
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
     res.end(data);
   } catch {
     res.writeHead(404); res.end('Not found');

@@ -10,37 +10,84 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="logo">🦘</span> Canguinha <span class="sub">finanças pessoais</span></div>
+    <div class="brand"><span class="logo" aria-hidden="true">🦘</span> Canguinha</div>
     <div class="top-actions">
-      <span id="updated" class="muted small"></span>
-      <button id="btn-people" class="btn ghost">Pessoas</button>
-      <button id="btn-categories" class="btn ghost">Categorias</button>
-      <button id="btn-connections" class="btn ghost">Conexões</button>
-      <button id="btn-refresh" class="btn">Atualizar</button>
-      <button id="btn-theme" class="btn ghost icon" title="Alternar tema" aria-label="Alternar tema">◐</button>
-      <span id="user-box" class="user-box" hidden>
-        <img id="user-pic" alt="" referrerpolicy="no-referrer">
-        <span id="user-email" class="small"></span>
-        <button id="btn-logout" class="btn ghost">Sair</button>
-      </span>
+      <span id="updated" class="muted small sync-time"></span>
+      <button id="btn-refresh" class="btn" title="Buscar dados novos da Pluggy">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 4v5h-5"/></svg><span class="lbl">Atualizar</span>
+      </button>
+      <button id="btn-menu" class="btn ghost icon menu-toggle" aria-label="Menu" aria-expanded="false" aria-controls="top-menu">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <div id="top-menu" class="top-menu">
+        <button id="btn-people" class="btn ghost">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Pessoas</button>
+        <button id="btn-categories" class="btn ghost">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01"/></svg>Categorias</button>
+        <button id="btn-connections" class="btn ghost">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Conexões</button>
+        <button id="btn-theme" class="btn ghost" title="Alternar tema claro/escuro">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg><span class="menu-only">Tema claro/escuro</span></button>
+        <span id="user-box" class="user-box" hidden>
+          <img id="user-pic" alt="" referrerpolicy="no-referrer">
+          <span id="user-email" class="small"></span>
+          <button id="btn-logout" class="btn ghost">Sair</button>
+        </span>
+      </div>
     </div>
   </header>
 
   <div id="demo-banner" class="banner" hidden>
-    Modo demonstração — dados fictícios. Configure <code>PLUGGY_CLIENT_ID</code>, <code>PLUGGY_CLIENT_SECRET</code> e <code>PLUGGY_ITEM_IDS</code> no <code>.env</code> para ver seus dados reais.
+    Modo demonstração: dados fictícios. Configure <code>PLUGGY_CLIENT_ID</code>, <code>PLUGGY_CLIENT_SECRET</code> e <code>PLUGGY_ITEM_IDS</code> no <code>.env</code> para ver seus dados reais.
   </div>
-  <div id="error-banner" class="banner error" hidden></div>
-  <div id="bill-alert" class="banner info" hidden></div>
+  <div id="error-banner" class="banner error" role="alert" hidden></div>
 
   <main>
-    <nav class="tabs" role="tablist">
-      <button role="tab" data-view="overview" aria-selected="true">Visão geral</button>
-      <button role="tab" data-view="bills" aria-selected="false">Faturas</button>
+    <nav class="tabs" aria-label="Seções">
+      <a href="#hoje" data-view="today" aria-current="page">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Hoje</span></a>
+      <a href="#visao-geral" data-view="overview">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3v18h18M7 15l4-4 3 3 6-6"/></svg><span>Visão geral</span></a>
+      <a href="#faturas" data-view="bills">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2zM2 10h20M6 15h4"/></svg><span>Faturas</span></a>
     </nav>
 
-    <div id="view-overview" class="view">
+    <div id="view-today" class="view">
+      <div class="today-head">
+        <h1 id="today-title">Hoje</h1>
+        <p class="muted small" id="today-sub"></p>
+      </div>
+      <div id="bill-alert" hidden></div>
+      <section id="today-cards" class="today-cards" aria-label="Quanto pode gastar, por cartão"></section>
+      <div class="today-grid">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Últimos gastos nos cartões</h2>
+            <a href="#visao-geral" data-view="overview" class="small">Ver tudo</a>
+          </div>
+          <p class="muted small hint-line">Toque na categoria para corrigir · “dividir” para rachar com alguém</p>
+          <div id="today-recent" class="daylist"></div>
+        </section>
+        <aside class="today-side">
+          <section class="panel" id="today-due-panel" hidden>
+            <div class="panel-head"><h2>Faturas a pagar</h2></div>
+            <ul class="due-list" id="today-due"></ul>
+          </section>
+          <section class="panel" id="today-people-panel" hidden>
+            <div class="panel-head"><h2>Te devem</h2><strong id="today-people-total"></strong></div>
+            <ul class="due-list" id="today-people"></ul>
+          </section>
+          <section class="panel" id="today-balance-panel" hidden>
+            <div class="panel-head"><h2>Saldo em conta</h2></div>
+            <ul class="due-list" id="today-balance"></ul>
+          </section>
+        </aside>
+      </div>
+    </div>
+
+    <div id="view-overview" class="view" hidden>
     <section class="filters" aria-label="Filtros">
-      <div class="seg" id="period-presets" role="group" aria-label="Período">
+      <div class="seg scroll" id="period-presets" role="group" aria-label="Período">
         <button data-preset="month" class="active">Este mês</button>
         <button data-preset="lastmonth">Mês passado</button>
         <button data-preset="30">30 dias</button>
@@ -52,28 +99,32 @@
         <label>De <input type="date" id="from"></label>
         <label>Até <input type="date" id="to"></label>
       </div>
-      <label class="toggle" title="Remove pagamentos de fatura e transferências entre suas próprias contas para não contar o mesmo gasto duas vezes">
-        <input type="checkbox" id="exclude-internal" checked> Ignorar transferências internas e pagamento de fatura
+      <label class="toggle switch" title="Remove pagamentos de fatura e transferências entre suas próprias contas para não contar o mesmo gasto duas vezes">
+        <input type="checkbox" id="exclude-internal" checked> Ignorar transferências internas
       </label>
-      <label class="toggle" title="Nas despesas divididas com outras pessoas, entra nos totais e gráficos só a parte que é sua">
-        <input type="checkbox" id="my-share" checked> Contar só a minha parte das despesas divididas
+      <label class="toggle switch" title="Nas despesas divididas com outras pessoas, entra nos totais e gráficos só a parte que é sua">
+        <input type="checkbox" id="my-share" checked> Só a minha parte das divididas
       </label>
     </section>
 
-    <section class="kpis" id="kpis" aria-label="Resumo"></section>
+    <section class="kpis" id="kpis" aria-label="Resumo do período"></section>
 
-    <section>
+    <section aria-label="Filtrar por conta">
       <div class="section-head">
         <h2>Contas e cartões</h2>
-        <span class="muted small">Clique para filtrar · <a href="#" id="select-all">mostrar todas</a></span>
+        <span class="muted small">Toque para filtrar · <a href="#" id="select-all">todas</a></span>
       </div>
       <div class="accounts" id="accounts"></div>
     </section>
 
     <section class="grid-charts">
-      <div class="panel wide">
+      <div class="panel">
+        <div class="panel-head"><h2>Gastos por categoria</h2><span class="muted small">toque para filtrar a lista</span></div>
+        <div class="chart-box tall"><canvas id="chart-cat" role="img" aria-label="Gastos por categoria"></canvas></div>
+      </div>
+      <div class="panel">
         <div class="panel-head">
-          <h3>Entradas e saídas</h3>
+          <h2>Entradas e saídas</h2>
           <div class="legend" id="flow-legend">
             <span><i class="sw" style="background:var(--series-1)"></i>Entradas</span>
             <span><i class="sw" style="background:var(--series-2)"></i>Saídas</span>
@@ -81,23 +132,15 @@
         </div>
         <div class="chart-box"><canvas id="chart-flow" role="img" aria-label="Entradas e saídas por período"></canvas></div>
       </div>
-      <div class="panel">
-        <div class="panel-head"><h3>Gastos por categoria</h3></div>
-        <div class="chart-box tall"><canvas id="chart-cat" role="img" aria-label="Gastos por categoria"></canvas></div>
-      </div>
-      <div class="panel">
-        <div class="panel-head"><h3>Gastos por conta / cartão</h3></div>
-        <div class="chart-box tall"><canvas id="chart-acc" role="img" aria-label="Gastos por conta ou cartão"></canvas></div>
-      </div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="tx-panel">
       <div class="panel-head">
-        <h3>Transações <span class="muted small" id="tx-count"></span></h3>
+        <h2>Transações <span class="muted small" id="tx-count"></span></h2>
         <div class="tx-tools">
-          <input type="search" id="search" placeholder="Buscar descrição…">
-          <select id="cat-filter"><option value="">Todas as categorias</option></select>
-          <select id="dir-filter">
+          <input type="search" id="search" placeholder="Buscar descrição…" aria-label="Buscar descrição">
+          <select id="cat-filter" aria-label="Categoria"><option value="">Todas as categorias</option></select>
+          <select id="dir-filter" aria-label="Entradas ou saídas">
             <option value="">Entradas e saídas</option>
             <option value="in">Só entradas</option>
             <option value="out">Só saídas</option>
@@ -106,7 +149,7 @@
         </div>
       </div>
       <div class="table-wrap">
-        <table class="tx">
+        <table class="tx stack">
           <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th class="num">Valor</th></tr></thead>
           <tbody id="tx-body"></tbody>
           <tfoot><tr><td colspan="4">Total filtrado</td><td class="num" id="tx-total"></td></tr></tfoot>
@@ -117,74 +160,43 @@
     </div>
 
     <div id="view-bills" class="view" hidden>
-      <section class="filters"><div class="seg" id="card-select" role="group" aria-label="Cartão"></div></section>
-      <section class="kpis" id="bill-kpis"></section>
-      <section class="grid-charts goal-grid">
-        <div class="panel" id="goal-panel">
-          <div class="panel-head">
-            <h3>Meta semanal</h3>
-            <button class="btn ghost" id="btn-goal-edit" type="button" hidden>Editar meta</button>
+      <section class="filters sticky-filter" id="card-select-box"><div class="seg scroll" id="card-select" role="group" aria-label="Cartão"></div></section>
+      <section class="bill-hero" id="bill-kpis" aria-label="Fatura aberta"></section>
+      <section class="grid-charts bill-main" id="bill-detail" hidden>
+        <div class="panel">
+          <div class="panel-head"><div><h2 id="bill-detail-title">Lançamentos</h2><span class="muted small" id="bill-detail-sub"></span></div><select id="bill-pick" aria-label="Escolher fatura"></select></div>
+          <div class="table-wrap">
+            <table class="tx stack">
+              <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
+              <tbody id="bill-tx-body"></tbody>
+              <tfoot><tr><td colspan="3">Soma dos lançamentos</td><td class="num" id="bill-tx-total"></td></tr></tfoot>
+            </table>
           </div>
-          <form id="goal-form" class="goal-form" hidden>
-            <label for="goal-input">Quanto quer gastar por semana neste cartão?</label>
-            <div class="goal-row">
-              <span class="prefix">R$</span>
-              <input id="goal-input" type="number" min="1" step="0.01" inputmode="decimal" placeholder="500,00" required>
-              <button class="btn" type="submit">Salvar</button>
-              <button class="btn ghost" type="button" id="btn-goal-cancel">Cancelar</button>
-              <button class="btn ghost" type="button" id="btn-goal-remove" hidden>Remover meta</button>
-            </div>
-            <p class="muted small" id="goal-hint"></p>
-          </form>
-          <div id="goal-body"></div>
+          <div class="more"><button type="button" class="btn ghost" id="btn-bill-more" hidden></button></div>
+          <p class="muted small" id="bill-tx-note"></p>
         </div>
         <div class="panel">
-          <div class="panel-head">
-            <h3>Gastos por semana</h3>
-            <div class="legend">
-              <span><i class="sw" style="background:var(--series-2)"></i>Gasto na semana</span>
-              <span><i class="sw sw-line"></i>Meta</span>
-            </div>
-          </div>
-          <div class="chart-box"><canvas id="chart-weeks" role="img" aria-label="Gastos do cartão por semana comparados à meta"></canvas></div>
-          <div id="week-days">
-            <div class="panel-head">
-              <h3 id="week-days-title">Gastos por dia</h3>
-              <button type="button" class="btn ghost icon" id="btn-week-days-reset" title="Voltar à semana atual" hidden>Semana atual</button>
-            </div>
-            <div class="chart-box short"><canvas id="chart-week-days" role="img" aria-label="Gastos do cartão por dia da semana"></canvas></div>
-            <p class="muted small" id="week-days-note"></p>
-            <div id="week-day-detail" hidden>
-              <div class="panel-head"><h3 id="week-day-title"></h3><button type="button" class="btn ghost icon" id="btn-week-day-close" title="Fechar">✕</button></div>
-              <div class="table-wrap">
-                <table class="tx">
-                  <thead><tr><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
-                  <tbody id="week-day-body"></tbody>
-                  <tfoot><tr><td colspan="2">Total do dia</td><td class="num" id="week-day-total"></td></tr></tfoot>
-                </table>
-              </div>
+          <div class="panel-head"><h2>Para onde foi</h2></div>
+          <div class="chart-box tall"><canvas id="chart-bill-cat" role="img" aria-label="Gastos da fatura por categoria"></canvas></div>
+          <p class="muted small" id="bill-cat-hint">Toque numa barra para ver os gastos da categoria.</p>
+          <div id="bill-cat-detail" hidden>
+            <div class="panel-head"><h3 id="bill-cat-title"></h3><button type="button" class="btn ghost icon" id="btn-bill-cat-close" title="Fechar" aria-label="Fechar">✕</button></div>
+            <div class="table-wrap">
+              <table class="tx stack">
+                <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
+                <tbody id="bill-cat-body"></tbody>
+                <tfoot><tr><td colspan="3">Total</td><td class="num" id="bill-cat-total"></td></tr></tfoot>
+              </table>
             </div>
           </div>
         </div>
       </section>
+
+      <div class="section-row"><h2 class="section-title">Metas e ritmo de gasto</h2><button class="btn ghost" id="btn-goal-open" type="button">Definir meta</button></div>
       <section class="grid-charts goal-grid">
-        <div class="panel" id="mgoal-panel">
-          <div class="panel-head">
-            <h3>Meta mensal</h3>
-            <button class="btn ghost" id="btn-mgoal-edit" type="button" hidden>Editar meta</button>
-          </div>
-          <form id="mgoal-form" class="goal-form" hidden>
-            <label for="mgoal-input">Quanto quer gastar por fatura (ciclo de fechamento a fechamento)?</label>
-            <div class="goal-row">
-              <span class="prefix">R$</span>
-              <input id="mgoal-input" type="number" min="1" step="0.01" inputmode="decimal" required>
-              <button class="btn" type="submit">Salvar</button>
-              <button class="btn ghost" type="button" id="btn-mgoal-cancel">Cancelar</button>
-              <button class="btn ghost" type="button" id="btn-mgoal-remove" hidden>Remover meta</button>
-            </div>
-            <p class="muted small" id="mgoal-hint"></p>
-          </form>
-          <div id="mgoal-body"></div>
+        <div class="panel" id="goal-panel">
+          <div class="panel-head"><h2 id="goal-title">Meta</h2></div>
+          <div id="goal-body"></div>
         </div>
         <div class="panel">
           <div class="panel-head">
@@ -194,12 +206,12 @@
               <span><i class="sw sw-line"></i>Ritmo da meta</span>
             </div>
           </div>
-          <div class="chart-box"><canvas id="chart-mburn" role="img" aria-label="Gasto acumulado no período comparado ao ritmo da meta mensal"></canvas></div>
+          <div class="chart-box"><canvas id="chart-mburn" role="img" aria-label="Gasto acumulado no período comparado ao ritmo da meta"></canvas></div>
         </div>
       </section>
       <section class="panel" id="cal-panel">
         <div class="panel-head">
-          <h3>Calendário de gastos</h3>
+          <h2>Gasto por dia</h2>
           <div class="cal-nav">
             <button type="button" class="btn ghost icon" id="btn-cal-prev" title="Mês anterior" aria-label="Mês anterior">‹</button>
             <strong id="cal-title" aria-live="polite"></strong>
@@ -207,19 +219,21 @@
             <button type="button" class="btn ghost" id="btn-cal-today" hidden>Mês atual</button>
           </div>
         </div>
-        <div class="cal" id="cal-grid" role="grid" aria-label="Gastos do cartão por dia do mês"></div>
-        <p class="muted small" id="cal-note"></p>
-        <div id="cal-detail" hidden>
-          <div class="panel-head"><h3 id="cal-day-title"></h3><button type="button" class="btn ghost icon" id="btn-cal-day-close" title="Fechar">✕</button></div>
-          <div class="table-wrap">
-            <table class="tx">
-              <thead><tr><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
-              <tbody id="cal-day-body"></tbody>
-              <tfoot><tr><td colspan="2">Total do dia</td><td class="num" id="cal-day-total"></td></tr></tfoot>
-            </table>
-          </div>
+        <div class="cal-layout">
+          <div class="cal" id="cal-grid" role="grid" aria-label="Gastos do cartão por dia do mês"></div>
+          <aside class="cal-side" aria-live="polite">
+            <p class="muted small" id="cal-note"></p>
+            <div id="cal-empty" class="cal-empty">Toque num dia para ver os lançamentos dele.</div>
+            <div id="cal-detail" hidden>
+              <div class="cal-day-head"><h3 id="cal-day-title"></h3><button type="button" class="btn ghost icon" id="btn-cal-day-close" title="Fechar" aria-label="Fechar">✕</button></div>
+              <div id="cal-day-body" class="daylist"></div>
+              <div class="cal-day-total"><span>Total do dia</span><strong id="cal-day-total"></strong></div>
+            </div>
+          </aside>
         </div>
       </section>
+
+      <h2 class="section-title">Histórico</h2>
       <section class="panel">
         <div class="panel-head">
           <h3>Histórico de faturas</h3>
@@ -231,40 +245,12 @@
         <div class="chart-box"><canvas id="chart-bills" role="img" aria-label="Valor total das faturas por mês de vencimento"></canvas></div>
       </section>
       <section class="panel">
-        <div class="panel-head"><h3>Faturas</h3><span class="muted small">Clique numa fatura para ver os lançamentos</span></div>
+        <div class="panel-head"><h3>Todas as faturas</h3><span class="muted small">Toque numa fatura para ver os lançamentos acima</span></div>
         <div class="table-wrap">
           <table class="tx bills">
-            <thead><tr><th>Vencimento</th><th>Fechamento</th><th>Situação</th><th class="num">Lançamentos</th><th class="num">Mínimo</th><th class="num">Total</th></tr></thead>
+            <thead><tr><th>Vencimento</th><th class="opt">Fechamento</th><th>Situação</th><th class="num opt">Lançamentos</th><th class="num opt">Mínimo</th><th class="num">Total</th></tr></thead>
             <tbody id="bills-body"></tbody>
           </table>
-        </div>
-      </section>
-      <section class="grid-charts" id="bill-detail" hidden>
-        <div class="panel">
-          <div class="panel-head"><h3 id="bill-detail-title">Lançamentos</h3><span class="muted small" id="bill-detail-sub"></span></div>
-          <div class="table-wrap">
-            <table class="tx">
-              <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
-              <tbody id="bill-tx-body"></tbody>
-              <tfoot><tr><td colspan="3">Soma dos lançamentos</td><td class="num" id="bill-tx-total"></td></tr></tfoot>
-            </table>
-          </div>
-          <p class="muted small" id="bill-tx-note"></p>
-        </div>
-        <div class="panel">
-          <div class="panel-head"><h3>Gastos da fatura por categoria</h3></div>
-          <div class="chart-box tall"><canvas id="chart-bill-cat" role="img" aria-label="Gastos da fatura por categoria"></canvas></div>
-          <p class="muted small" id="bill-cat-hint">Clique numa barra para ver os gastos da categoria.</p>
-          <div id="bill-cat-detail" hidden>
-            <div class="panel-head"><h3 id="bill-cat-title"></h3><button type="button" class="btn ghost icon" id="btn-bill-cat-close" title="Fechar">✕</button></div>
-            <div class="table-wrap">
-              <table class="tx">
-                <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
-                <tbody id="bill-cat-body"></tbody>
-                <tfoot><tr><td colspan="3">Total</td><td class="num" id="bill-cat-total"></td></tr></tfoot>
-              </table>
-            </div>
-          </div>
         </div>
       </section>
     </div>
@@ -293,6 +279,29 @@
         <ul class="items" id="webhook-events"></ul>
       </div>
       <div class="dlg-foot"><button class="btn ghost">Fechar</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-goal">
+    <form class="dlg" id="goal-dlg-form">
+      <h3>Meta de gastos <span class="muted" id="gd-card"></span></h3>
+      <p class="small muted" id="gd-cycle"></p>
+      <div class="seg" id="gd-mode" role="group" aria-label="Definir a meta por">
+        <button type="button" data-mode="monthly">Por fatura</button>
+        <button type="button" data-mode="weekly">Por semana</button>
+        <button type="button" data-mode="daily">Por dia</button>
+      </div>
+      <label class="field" for="gd-input" id="gd-label"></label>
+      <div class="goal-row"><span class="prefix">R$</span><input id="gd-input" type="number" min="1" step="0.01" inputmode="decimal" autocomplete="off"></div>
+      <div class="gd-eq" id="gd-eq" aria-live="polite"></div>
+      <div class="gd-sugg" id="gd-sugg"></div>
+      <p class="muted small" id="gd-note"></p>
+      <p class="small neg" id="gd-msg"></p>
+      <div class="dlg-foot">
+        <button class="btn ghost" type="button" id="btn-gd-remove" hidden>Remover meta</button>
+        <button class="btn ghost" type="button" id="btn-gd-cancel">Cancelar</button>
+        <button class="btn" type="submit">Salvar</button>
+      </div>
     </form>
   </dialog>
 
