@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import { isCardPayment, addMonths, monthlyOnOrAfter } from './public/shared.js';
+import { isCardPayment, addMonths, monthlyOnOrAfter, ruleKey } from './public/shared.js';
 import { demoAccounts, demoTransactions, demoBills } from './lib/demo.js';
 import { createStore, DuplicateError } from './lib/store.js';
 import { createAuth } from './lib/auth.js';
@@ -356,13 +356,6 @@ function installmentPlan(tx, bills, closeEst, dueEst) {
 // Ordem: escolha manual na transação > escolha para a compra parcelada (todas as parcelas, inclusive as previstas)
 // > regra pela descrição > categoria da Pluggy.
 // Nada é gravado sobre o dado da Pluggy; a troca acontece na leitura (e não altera os objetos em cache).
-// chave da regra: descrição sem datas, horários, parcelas e números longos ("PIX - ENVIADO 04/11 09:48 FULANO" → "pix - enviado fulano")
-const ruleKey = (d) => String(d || '').toLowerCase()
-  .replace(/\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/g, ' ') // datas e parcelas (04/11, 3/10)
-  .replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, ' ')        // horários
-  .replace(/\b\d{6,}\b/g, ' ')                        // documentos, códigos
-  .replace(/\bparc(ela)?\b\.?/g, ' ')
-  .replace(/\s+/g, ' ').trim();
 // Também anexa as divisões com outras pessoas: `shares` [{personId, amount}] e `myAmount` (a sua parte).
 const round2 = (v) => Math.round(v * 100) / 100;
 async function annotator() {
@@ -903,7 +896,7 @@ setupWebhooks();
 // Bot do Telegram (opcional): comandos /diaria, /semana, /mes, /fatura, /saldo. Só responde aos chats autorizados.
 if (process.env.TELEGRAM_BOT_TOKEN) {
   // Perguntas de categoria: precisam do histórico (Postgres) para saber o que é novo. TELEGRAM_CATEGORIZE=0 desliga.
-  if (HISTORY && process.env.TELEGRAM_CATEGORIZE !== '0') categorizer = createCategorizer({ store, ruleKey, today: todayIso });
+  if (HISTORY && process.env.TELEGRAM_CATEGORIZE !== '0') categorizer = createCategorizer({ store, today: todayIso });
   const cmds = botCommands({
     today: todayIso,
     listAccounts: () => listAccounts(false),

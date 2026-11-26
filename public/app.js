@@ -1,6 +1,6 @@
 // Canguinha — dashboard
 import * as G from './shared.js';
-const { CATEGORY_PT } = G;
+const { CATEGORY_PT, ruleKey } = G;
 const $ = (s) => document.querySelector(s);
 const BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const BRL0 = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
@@ -13,12 +13,6 @@ const catName = (c) => {
   return CATEGORY_PT[c] || c;
 };
 const isCustom = (c) => String(c).startsWith('custom:');
-const ruleKey = (d) => String(d || '').toLowerCase()
-  .replace(/\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/g, ' ') // datas e parcelas (04/11, 3/10)
-  .replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, ' ')        // horários
-  .replace(/\b\d{6,}\b/g, ' ')                        // documentos, códigos
-  .replace(/\bparc(ela)?\b\.?/g, ' ')
-  .replace(/\s+/g, ' ').trim();  // igual ao server.js
 // chip clicável que abre o seletor de categoria do lançamento
 // attr: data-cat-tx (lançamento) ou data-cat-up (parcela prevista, pelo id da parcela que a originou)
 function catChip(t, attr = 'data-cat-tx') {

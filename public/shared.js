@@ -35,6 +35,16 @@ export function monthlyOnOrAfter(base, min, kMin = 0) {
   return d;
 }
 
+// ---------------------------------------------------------------- regras de categoria
+// Chave da regra "aplicar a todas com esta descrição": a descrição sem datas, horários, parcelas e números longos
+// ("PIX - ENVIADO 04/11 09:48 FULANO" → "pix - enviado fulano"). Usada pelo servidor, pelo painel e pelo bot.
+export const ruleKey = (d) => String(d || '').toLowerCase()
+  .replace(/\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/g, ' ') // datas e parcelas (04/11, 3/10)
+  .replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, ' ')        // horários
+  .replace(/\b\d{6,}\b/g, ' ')                        // documentos, códigos
+  .replace(/\bparc(ela)?\b\.?/g, ' ')
+  .replace(/\s+/g, ' ').trim();
+
 // ---------------------------------------------------------------- metas
 export const WEEKS = 8;
 // Movimentações internas (pagamento de fatura, transferência entre contas próprias): não são gasto.

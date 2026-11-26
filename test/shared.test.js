@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { addMonths, monthlyOnOrAfter, weekStatus, monthStatus, todayAllowance, isCardPayment } from '../public/shared.js';
+import { addMonths, monthlyOnOrAfter, weekStatus, monthStatus, todayAllowance, isCardPayment, ruleKey } from '../public/shared.js';
 
 test('addMonths limita ao último dia do mês', () => {
   assert.equal(addMonths('2026-01-31', 1), '2026-02-28');
@@ -88,4 +88,13 @@ test('pagamento de fatura não conta como estorno', () => {
   assert.equal(isCardPayment({ direction: 'in', category: 'Credit card payment', description: 'x' }), true);
   assert.equal(isCardPayment({ direction: 'in', description: 'ESTORNO LOJA X' }), false);
   assert.equal(isCardPayment({ direction: 'out', category: 'Credit card payment', description: 'x' }), false);
+});
+
+// ---------------------------------------------------------------- regras de categoria
+test('ruleKey: a mesma despesa em dias diferentes gera a mesma chave', () => {
+  assert.equal(ruleKey('PIX - ENVIADO 04/11 09:48 FULANO'), 'pix - enviado fulano');
+  assert.equal(ruleKey('PIX - ENVIADO 12/11 18:03 FULANO'), 'pix - enviado fulano');
+  assert.equal(ruleKey('LOJA X PARC 02/10'), 'loja x');
+  assert.equal(ruleKey('BOLETO 12345678901 ENERGIA'), 'boleto energia');
+  assert.equal(ruleKey(null), '');
 });
