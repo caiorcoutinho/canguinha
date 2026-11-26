@@ -14,6 +14,7 @@ import { startTelegramBot } from './lib/telegram.js';
 import { botCommands } from './lib/bot.js';
 import { createCategorizer } from './lib/categorizer.js';
 import { purchaseKey, stripInstallment, migratePurchaseKeys } from './lib/purchases.js';
+import { scheduleDaily } from './lib/daily.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -901,77 +902,35 @@ if (process.env.TELEGRAM_BOT_TOKEN) {
   });
   categorizer?.attach(bot);
   const at = (process.env.TELEGRAM_DAILY_SUMMARY ?? '08:00').trim();
-  if (at && at !== '0') scheduleDailySummary(bot, at, cmds.summary);
-}
-
-// Resumo diário no Telegram às `at` (HH:MM no fuso TZ_DISPLAY). Confere a cada minuto; o dia do último envio fica
-// gravado, então reiniciar não repete. Se o app estava fora do ar no horário, envia ao voltar (até 4h depois).
-function scheduleDailySummary(bot, at, summary) {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(at);
-  if (!m || +m[1] > 23 || +m[2] > 59) return console.error(`[resumo] TELEGRAM_DAILY_SUMMARY inválido: "${at}" (use HH:MM)`);
-  const target = +m[1] * 60 + +m[2], CATCH_UP_MIN = 4 * 60, RETRY_MS = 15 * 60_000;
-  const clock = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-  let sentDay = null, busy = false, retryAt = 0;
-  const tick = async () => {
-    if (busy || Date.now() < retryAt || !bot.chats.length) return;
-    const [h, mi] = clock.format(new Date()).split(':').map(Number);
-    const now = h * 60 + mi, day = todayIso();
-    if (now < target || now > target + CATCH_UP_MIN || sentDay === day) return;
-    busy = true;
-    try {
-      sentDay = await store.getSetting('daily_summary_sent');
-      if (sentDay === day) return;
+  // Resumo diário às `at` (TELEGRAM_DAILY_SUMMARY): nunca duas vezes no mesmo dia; se o app estava fora, até 4h depois.
+  if (at && at !== '0' && bot.chats.length) bot.ready.then((ok) => ok && scheduleDaily({
+    name: 'resumo', at, tz: TZ, catchUpMin: 4 * 60, key: 'daily_summary_sent', store,
+    run: async () => {
       // dados frescos antes de resumir (sem travar o envio se a Pluggy demorar)
       if (HISTORY) await Promise.race([syncAll('resumo diário'), new Promise((r) => setTimeout(r, 120_000))]).catch(() => {});
-      const html = await summary();
+      const html = await cmds.summary();
       for (const chatId of bot.chats) await bot.send(chatId, html);
-      await store.setSetting('daily_summary_sent', day);
-      sentDay = day;
       console.log(`[resumo] enviado para ${bot.chats.length} chat(s)`);
-    } catch (err) {
-      console.error('[resumo]', err.message, '· nova tentativa em 15 min');
-      retryAt = Date.now() + RETRY_MS;
-    } finally { busy = false; }
-  };
-  bot.ready.then((ok) => { if (ok) { tick(); setInterval(tick, 60_000).unref(); } });
+    },
+  }));
 }
 
-// Pede à Pluggy que colete os dados no banco todo dia às `at` (HH:MM no fuso TZ_DISPLAY), em vez de depender só
-// do auto-sync dela (que roda ~24h após a última atualização). O dia da última execução fica gravado, então
-// reiniciar não repete; se o app estava fora do ar no horário, roda ao voltar (até 2h depois).
-function scheduleItemRefresh(at) {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(at);
-  if (!m || +m[1] > 23 || +m[2] > 59) return console.error(`[atualização] PLUGGY_UPDATE_AT inválido: "${at}" (use HH:MM)`);
-  const target = +m[1] * 60 + +m[2], CATCH_UP_MIN = 120;
-  const clock = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-  let doneDay = null, busy = false;
-  const tick = async () => {
-    if (busy) return;
-    const [h, mi] = clock.format(new Date()).split(':').map(Number);
-    const now = h * 60 + mi, day = todayIso();
-    if (now < target || now > target + CATCH_UP_MIN || doneDay === day) return;
-    busy = true;
-    try {
-      doneDay = await store.getSetting('item_refresh_day');
-      if (doneDay === day) return;
-      await store.setSetting('item_refresh_day', day);
-      doneDay = day;
-      for (const itemId of await loadItemIds()) {
-        try {
-          const r = await pluggy(`/items/${itemId}`, { method: 'PATCH', body: {} });
-          console.log(`[atualização] item ${itemId.slice(0, 8)} solicitado: ${r.status}`);
-          watchItem(itemId, r.status);
-        } catch (err) { console.error(`[atualização] item ${itemId.slice(0, 8)}:`, err.message); }
-      }
-      cache.clear();
-    } catch (err) { console.error('[atualização]', err.message); } finally { busy = false; }
-  };
-  tick(); setInterval(tick, 60_000).unref();
-  console.log(`Atualização diária dos bancos na Pluggy às ${at} (${TZ})`);
-}
-
+// Pede à Pluggy que colete os dados no banco todo dia às PLUGGY_UPDATE_AT, em vez de depender só do auto-sync dela
+// (que roda ~24h após a última atualização). Se o app estava fora do ar no horário, roda ao voltar (até 2h depois).
 const UPDATE_AT = (process.env.PLUGGY_UPDATE_AT || '').trim();
-if (!DEMO && UPDATE_AT && UPDATE_AT !== '0') scheduleItemRefresh(UPDATE_AT);
+if (!DEMO && UPDATE_AT && UPDATE_AT !== '0' && scheduleDaily({
+  name: 'atualização', at: UPDATE_AT, tz: TZ, catchUpMin: 120, key: 'item_refresh_day', store,
+  run: async () => {
+    for (const itemId of await loadItemIds()) {
+      try {
+        const r = await pluggy(`/items/${itemId}`, { method: 'PATCH', body: {} });
+        console.log(`[atualização] item ${itemId.slice(0, 8)} solicitado: ${r.status}`);
+        watchItem(itemId, r.status);
+      } catch (err) { console.error(`[atualização] item ${itemId.slice(0, 8)}:`, err.message); }
+    }
+    cache.clear();
+  },
+})) console.log(`Atualização diária dos bancos na Pluggy às ${UPDATE_AT} (${TZ})`);
 
 if (HISTORY) {
   setTimeout(() => syncAll('inicialização'), 5000);
