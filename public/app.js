@@ -937,7 +937,8 @@ function drawBurn(win, items, goal, base) {
   const cum = days.map((d) => { acc += byDay[d] || 0; return d <= today ? Math.max(0, acc) : null; });
   for (let i = 0; i < cum.length; i++) if (cum[i] != null) cum[i] += base;
   const datasets = [{ label: base ? 'Gasto acumulado + parcelas previstas' : 'Gasto acumulado', data: cum, borderColor: cssVar('--series-2'), backgroundColor: cssVar('--series-2'), borderWidth: 2, pointRadius: 0, pointHoverRadius: 5, tension: 0, spanGaps: false }];
-  if (goal) datasets.push({ label: 'Ritmo da meta', data: days.map((_, i) => (goal * (i + 1)) / total), borderColor: cssVar('--text-2'), borderWidth: 2, borderDash: [6, 4], pointRadius: 0, pointHoverRadius: 0 });
+  // começa nas parcelas previstas (já comprometidas) e espalha o resto da meta pelo ciclo, como o ritmo em shared.js
+  if (goal) datasets.push({ label: 'Ritmo da meta', data: days.map((_, i) => base + ((goal - base) * (i + 1)) / total), borderColor: cssVar('--text-2'), borderWidth: 2, borderDash: [6, 4], pointRadius: 0, pointHoverRadius: 0 });
   const opts = baseOptions();
   opts.plugins.tooltip.callbacks.title = (it) => brDate(days[it[0].dataIndex]);
   opts.scales.x.ticks.maxTicksLimit = 8;
@@ -1239,7 +1240,7 @@ function renderToday() {
     ].join('');
 
     const p = month || week;
-    const expected = p.goalDaily * p.elapsed;
+    const expected = p.expected;
     const diff = p.spent - expected;
     const barTitle = month ? `Ciclo ${brDate(month.start).slice(0, 5)} – ${month.estimated ? '~' : ''}${brDate(month.end).slice(0, 5)}` : `Semana ${brDate(week.start).slice(0, 5)} – ${brDate(week.end).slice(0, 5)}`;
     const verdict = p.spent > p.goal ? `<span class="neg">meta estourada em ${fmt(p.spent - p.goal)}</span>`

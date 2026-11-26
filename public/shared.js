@@ -83,6 +83,14 @@ export function committedInstallments(card) {
   return { committed: up.reduce((s, u) => s + (u.myAmount ?? u.amount), 0), end: card?.open?.closeDate || null, count: up.length };
 }
 
+// Ritmo de uma meta: as parcelas previstas (`reserved`) já estão comprometidas desde o início do período, e o resto
+// da meta se espalha igual pelos dias. Fica acima do ritmo quando o lançado por dia passa do que sobra da meta por dia;
+// ter muitas parcelas no começo do ciclo não conta como gasto do dia. `expected` = onde o gasto deveria estar hoje.
+function pace(posted, reserved, goal, elapsed, days) {
+  const avgDaily = posted / elapsed + reserved / days, goalDaily = goal / days;
+  return { avgDaily, goalDaily, ahead: avgDaily > goalDaily, expected: reserved + ((goal - reserved) * elapsed) / days };
+}
+
 // `card` (opcional): as parcelas que ainda vão cair no ciclo entram na semana, divididas igualmente pelos dias
 // de hoje até o fechamento; a semana leva a parte de hoje até domingo. As já lançadas contam no dia em que caíram.
 export function weekStatus(items, goal, today, card) {
@@ -95,13 +103,12 @@ export function weekStatus(items, goal, today, card) {
     const until = sunday < end ? sunday : end;
     installments = committed * (daysBetween(today, until) + 1) / (daysBetween(today, end) + 1);
   }
-  const spent = Math.max(0, cur.spent) + installments;
+  const posted = Math.max(0, cur.spent), spent = posted + installments;
   const elapsed = Math.min(7, daysBetween(cur.start, today) + 1); // seg..hoje
   const daysLeft = 7 - elapsed + 1;                                // hoje..dom
-  const avgDaily = spent / elapsed, goalDaily = goal / 7;
   return {
     goal, spent, pct: (spent / goal) * 100, start: cur.start, end: isoAddDays(cur.start, 6), count: cur.count, elapsed, daysLeft,
-    remaining: goal - spent, avgDaily, goalDaily, ahead: avgDaily > goalDaily, installments, posted: spent - installments,
+    remaining: goal - spent, ...pace(posted, installments, goal, elapsed, 7), installments, posted,
   };
 }
 
@@ -145,7 +152,7 @@ export function monthStatus(card, goal, items, today) {
     untilSunday: Math.min(weekBudget - weekSpent, Math.max(0, remaining)), weekDays, weekBudget, weekSpent, weekStart: ws,
     projected: committed + (posted / elapsed) * total,
     posted, committed, upcoming,
-    avgDaily: spent / elapsed, goalDaily: goal / total, ahead: spent / elapsed > goal / total,
+    ...pace(posted, committed, goal, elapsed, total),
     pct: (spent / goal) * 100,
     tx,
   };

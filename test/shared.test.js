@@ -98,3 +98,26 @@ test('ruleKey: a mesma despesa em dias diferentes gera a mesma chave', () => {
   assert.equal(ruleKey('BOLETO 12345678901 ENERGIA'), 'boleto energia');
   assert.equal(ruleKey(null), '');
 });
+
+// ---------------------------------------------------------------- ritmo no início do ciclo
+// Fatura fechou 25/11; hoje 26/11 é o dia 1 de 30 do ciclo, nada lançado, R$ 554,34 em parcelas previstas.
+test('ritmo: parcelas previstas no 1º dia do ciclo não viram média diária', () => {
+  const c = { bills: [{ closeDate: '2026-11-25' }], open: { closeDate: '2026-12-25', upcoming: [{ amount: 554.34 }] } };
+  const m = monthStatus(c, 2000, [], TODAY);
+  assert.equal(m.elapsed, 1);
+  close(m.avgDaily, 554.34 / 30);              // antes: 554,34/dia
+  assert.equal(m.ahead, false);
+  close(m.expected, 554.34 + (2000 - 554.34) / 30);
+  // acima do ritmo só quando o lançado por dia passa do que sobra da meta por dia: (2000 − 554,34) / 30 = 48,19
+  assert.equal(monthStatus(c, 2000, [{ date: TODAY, net: 40 }], TODAY).ahead, false);
+  assert.equal(monthStatus(c, 2000, [{ date: TODAY, net: 50 }], TODAY).ahead, true);
+});
+
+test('ritmo semanal: segunda-feira com parcelas da semana inteira', () => {
+  // segunda 23/11, ciclo fecha domingo 29/11: as R$ 350 em parcelas caem todas nesta semana
+  const c = { bills: [{ closeDate: '2026-10-29' }], open: { closeDate: '2026-11-29', upcoming: [{ amount: 350 }] } };
+  const w = weekStatus([], 700, '2026-11-23', c);
+  close(w.installments, 350);
+  close(w.avgDaily, 50);                       // antes: 350/dia, contra 100/dia da meta
+  assert.equal(w.ahead, false);
+});

@@ -188,8 +188,9 @@ Se a porta 3000 não estiver publicada, use uma que esteja: `PORT=8080 npm start
   quanto ainda pode gastar por dia, por semana e até domingo para fechar dentro da meta, projeção no ritmo atual e
   gráfico do gasto acumulado contra o ritmo da meta. Considera como já comprometidas as **parcelas previstas**:
   próximas parcelas de compras parceladas que estavam na última fatura e ainda não foram lançadas (valor da parcela anterior). Se houver meta semanal também, mostra qual das duas é mais apertada.
-- Sinal de ritmo nas duas metas: avisa quando a média diária acumulada (semana: seg até hoje; mês: ciclo até hoje,
-  com parcelas previstas) passa da meta diária (semanal ÷ 7; mensal ÷ dias do ciclo)
+- Sinal de ritmo nas duas metas: as parcelas previstas ficam reservadas desde o início do período e o resto da meta se
+  espalha pelos dias; avisa quando o lançado por dia (semana: seg até hoje; mês: ciclo até hoje) passa do que sobra da
+  meta por dia. Assim o primeiro dia do ciclo, com todas as parcelas previstas, não aparece como acima do ritmo
 - Aviso no topo quando a média diária passa da meta diária, a meta semanal passa de 80% ou estoura, a mensal estoura ou a projeção passa dela, uma fatura fechada vence em até 7 dias ou a aberta fecha em até 3
 - Tema claro/escuro
 
