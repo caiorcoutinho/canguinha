@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import { isCardPayment, addMonths, monthlyOnOrAfter, ruleKey } from './public/shared.js';
+import { isCardPayment, monthlyOnOrAfter, ruleKey } from './public/shared.js';
 import { demoAccounts, demoTransactions, demoBills } from './lib/demo.js';
 import { createStore, DuplicateError } from './lib/store.js';
 import { createAuth } from './lib/auth.js';
@@ -278,7 +278,7 @@ async function billData(acc, refresh) {
   // Pagamento da fatura anterior não abate a fatura aberta (senão ela fica negativa / menor do que é).
   const sum = (list) => list.reduce((s, t) => s + (isCardPayment(t) ? 0 : t.direction === 'out' ? t.amount : -t.amount), 0);
   const openTx = tx.filter((t) => t.bill === 'open');
-  const installments = installmentPlan(tx, bills, closeEst, dueEst);
+  const installments = installmentPlan(tx, bills);
   // parcelas que ainda vão cair na fatura aberta
   const upcoming = installments.purchases.filter((p) => p.offset === 0).sort((a, b) => b.amount - a.amount).map((p) => ({
     description: p.description, category: p.category, purchaseDate: p.purchaseDate, purchaseKey: p.purchaseKey, direction: 'out',
@@ -300,10 +300,10 @@ async function billData(acc, refresh) {
   };
 }
 
-// Todas as parcelas que ainda vão cair (não lançadas), por compra e por fatura. Agrupa as parcelas pela etiqueta da
+// Todas as parcelas que ainda vão cair (não lançadas), por compra. Agrupa as parcelas pela etiqueta da
 // compra (purchaseKey, ver lib/purchases.js) e olha a mais recente de cada uma: a parcela seguinte à mais recente cai na fatura aberta (se a mais recente está na última fechada) ou na próxima
 // (se já está na aberta); as demais, uma por fatura. Valor = o da parcela mais recente.
-function installmentPlan(tx, bills, closeEst, dueEst) {
+function installmentPlan(tx, bills) {
   const lastClosed = bills.find((b) => b.closeDate)?.id;
   const latest = new Map();
   for (const t of tx) {
@@ -312,26 +312,20 @@ function installmentPlan(tx, bills, closeEst, dueEst) {
     if (!cur || t.installmentNumber > cur.installmentNumber) latest.set(t.purchaseKey, t);
   }
   const purchases = [];
-  const byBill = new Map(); // offset (0 = aberta) → total
   for (const t of latest.values()) {
     const left = t.totalInstallments - t.installmentNumber;
     if (left <= 0) continue;
     const offset = t.bill === 'open' ? 1 : t.bill && t.bill === lastClosed ? 0 : null;
     if (offset == null) continue; // parcela mais recente em fatura antiga: dado incompleto, não dá para prever
-    for (let i = 0; i < left; i++) byBill.set(offset + i, (byBill.get(offset + i) || 0) + t.amount);
     purchases.push({
       description: stripInstallment(t.description), category: t.category, purchaseDate: t.purchaseDate, purchaseKey: t.purchaseKey, sourceId: t.id, // parcela lançada mais recente
       amount: t.amount, next: t.installmentNumber + 1, totalInstallments: t.totalInstallments, left, remaining: t.amount * left,
       rawDescription: t.description, // com "PARC nn/NN CIDADE BR": o bot limpa igual às parcelas lançadas
       offset, // fatura em que cai a próxima parcela (0 = aberta, 1 = a seguinte...); a parcela next+i cai em offset+i
-      lastDueDate: dueEst ? addMonths(dueEst, offset + left - 1) : null,
     });
   }
   purchases.sort((a, b) => b.remaining - a.remaining);
-  const schedule = [...byBill.entries()].sort((a, b) => a[0] - b[0]).map(([i, total]) => ({
-    open: i === 0, closeDate: closeEst ? addMonths(closeEst, i) : null, dueDate: dueEst ? addMonths(dueEst, i) : null, total,
-  }));
-  return { purchases, schedule, total: purchases.reduce((s, p) => s + p.remaining, 0) };
+  return { purchases };
 }
 
 // ---------------------------------------------------------------- categorias personalizadas
