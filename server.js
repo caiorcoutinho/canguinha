@@ -371,6 +371,13 @@ async function allTransactions() {
   return lists.flat();
 }
 
+// Uma transação pelo id (para dividir ou categorizar a compra): busca só ela, sem carregar o histórico todo.
+async function findTransaction(id) {
+  if (DEMO) return demoTransactions().find((t) => t.id === id) || null;
+  const row = await store.getTransaction(id);
+  return row ? normalizeTransaction(row.raw, { id: row.accountId, kind: row.kind }) : null;
+}
+
 async function peopleSummary() {
   const [people, payments, tx] = await Promise.all([store.listPeople(), store.listPayments(), allTransactions().then(categorize)]);
   const shared = tx.filter((t) => t.shares).sort((a, b) => b.date.localeCompare(a.date));
@@ -738,7 +745,7 @@ async function handleApi(req, res, url) {
       await store.setRule(match, category);
       await store.setTxCategory(tc[1], null); // esta passa a seguir a regra
     } else if (body.scope === 'purchase') {
-      const t = (await allTransactions()).find((x) => x.id === tc[1]);
+      const t = await findTransaction(tc[1]);
       if (!t) throw new HttpError(404, 'Transação não encontrada');
       if (!t.purchaseKey) throw new HttpError(400, 'Não é uma compra parcelada');
       await store.setTxCategory(`purchase:${t.purchaseKey}`, category);
@@ -780,7 +787,7 @@ async function handleApi(req, res, url) {
   const ts = url.pathname.match(/^\/api\/transactions\/([A-Za-z0-9_-]{1,100})\/shares$/);
   if (ts && req.method === 'PUT') {
     const body = await readBody(req);
-    const t = (await allTransactions()).find((x) => x.id === ts[1]);
+    const t = await findTransaction(ts[1]);
     if (!t) throw new HttpError(404, 'Transação não encontrada');
     if (t.direction !== 'out') throw new HttpError(400, 'Só despesas podem ser divididas');
     const ids = new Set((await store.listPeople()).map((x) => x.id));
