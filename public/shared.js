@@ -21,6 +21,19 @@ const D = (s) => new Date(`${s}T00:00:00Z`);
 export const isoAddDays = (s, n) => { const d = D(s); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 export const daysBetween = (a, b) => Math.round((D(b) - D(a)) / 864e5);
 export const weekStartIso = (s) => isoAddDays(s, -((D(s).getUTCDay() + 6) % 7)); // segunda-feira
+// Soma meses mantendo o dia, limitado ao último do mês (31/01 + 1 = 28/02).
+export function addMonths(iso, n) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const last = new Date(Date.UTC(y, m - 1 + n + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(y, m - 1 + n, Math.min(d, last))).toISOString().slice(0, 10);
+}
+// Primeira data `base` + k meses (k >= kMin) que não fica antes de `min`. Conta sempre a partir de `base`:
+// somar mês a mês sobre a data já limitada perderia o dia 29–31 (31/01 → 28/02 → 28/03 em vez de 31/03).
+export function monthlyOnOrAfter(base, min, kMin = 0) {
+  let k = kMin, d = addMonths(base, k);
+  while (d < min) d = addMonths(base, ++k);
+  return d;
+}
 
 // ---------------------------------------------------------------- metas
 export const WEEKS = 8;

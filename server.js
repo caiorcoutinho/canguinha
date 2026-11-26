@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import { isCardPayment } from './public/shared.js';
+import { isCardPayment, addMonths, monthlyOnOrAfter } from './public/shared.js';
 import { demoAccounts, demoTransactions, demoBills } from './lib/demo.js';
 import { createStore, DuplicateError } from './lib/store.js';
 import { createAuth } from './lib/auth.js';
@@ -215,11 +215,6 @@ function nextUrl(next, qs) {
 
 // ---------------------------------------------------------------- faturas
 const todayIso = () => localDay.format(new Date());
-function addMonths(iso, n) {
-  const [y, m, d] = iso.split('-').map(Number);
-  const last = new Date(Date.UTC(y, m - 1 + n + 1, 0)).getUTCDate();
-  return new Date(Date.UTC(y, m - 1 + n, Math.min(d, last))).toISOString().slice(0, 10);
-}
 
 function normalizeBill(b) {
   return {
@@ -271,10 +266,12 @@ async function billData(acc, refresh) {
 
   const today = todayIso();
   const last = bills[0];
-  let closeEst = lastClose ? addMonths(lastClose, 1) : acc.closeDate;
-  while (closeEst && closeEst < today) closeEst = addMonths(closeEst, 1);
-  let dueEst = acc.dueDate && (!last || acc.dueDate.slice(0, 10) > last.dueDate) ? acc.dueDate.slice(0, 10) : last ? addMonths(last.dueDate, 1) : null;
-  while (dueEst && closeEst && dueEst < closeEst) dueEst = addMonths(dueEst, 1);
+  // fechamento: o mês seguinte ao último fechamento (ou o que a Pluggy informa), avançando até não ficar no passado
+  const accClose = acc.closeDate?.slice(0, 10), accDue = acc.dueDate?.slice(0, 10);
+  const closeEst = lastClose ? monthlyOnOrAfter(lastClose, today, 1) : accClose ? monthlyOnOrAfter(accClose, today) : null;
+  // vencimento: o da Pluggy se for mais novo que a última fatura; senão o mês seguinte a ela. Nunca antes do fechamento.
+  const [dueBase, dueK] = accDue && (!last || accDue > last.dueDate) ? [accDue, 0] : last ? [last.dueDate, 1] : [null];
+  const dueEst = dueBase ? monthlyOnOrAfter(dueBase, closeEst || '', dueK) : null;
 
   // Pagamento da fatura anterior não abate a fatura aberta (senão ela fica negativa / menor do que é).
   const sum = (list) => list.reduce((s, t) => s + (isCardPayment(t) ? 0 : t.direction === 'out' ? t.amount : -t.amount), 0);
