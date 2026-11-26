@@ -338,6 +338,7 @@ table.bills td { padding-top: 12px; padding-bottom: 12px; }
 .cal-d.today .n { font-weight: 700; color: var(--text); }
 .cal-d.sel { outline: 2px solid var(--text); outline-offset: 1px; }
 .cal-d.future { opacity: .45; cursor: default; }
+.cal-d.out { opacity: .4; } /* fora do ciclo da fatura do filtro */
 #cal-note { margin: 8px 0 0; }
 #cal-detail { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
 
@@ -539,7 +540,7 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .bh-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .bh-side .meter { margin: 6px 0 4px; }
 #bill-detail .panel-head > div { display: flex; flex-direction: column; }
-#bill-pick { max-width: 100%; }
+#bill-pick { max-width: 100%; margin-left: auto; }
 .goal-grid { align-items: stretch; }
 
 @media (min-width: 800px) {

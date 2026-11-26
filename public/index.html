@@ -160,11 +160,11 @@
     </div>
 
     <div id="view-bills" class="view" hidden>
-      <section class="filters sticky-filter" id="card-select-box"><div class="seg scroll" id="card-select" role="group" aria-label="Cartão"></div></section>
+      <section class="filters sticky-filter" id="card-select-box"><div class="seg scroll" id="card-select" role="group" aria-label="Cartão"></div><select id="bill-pick" aria-label="Fatura: filtra toda a página"></select></section>
       <section class="bill-hero" id="bill-kpis" aria-label="Fatura aberta"></section>
       <section class="grid-charts bill-main" id="bill-detail" hidden>
         <div class="panel">
-          <div class="panel-head"><div><h2 id="bill-detail-title">Lançamentos</h2><span class="muted small" id="bill-detail-sub"></span></div><select id="bill-pick" aria-label="Escolher fatura"></select></div>
+          <div class="panel-head"><div><h2 id="bill-detail-title">Lançamentos</h2><span class="muted small" id="bill-detail-sub"></span></div></div>
           <div class="table-wrap">
             <table class="tx stack">
               <thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th class="num">Valor</th></tr></thead>
@@ -245,7 +245,7 @@
         <div class="chart-box"><canvas id="chart-bills" role="img" aria-label="Valor total das faturas por mês de vencimento"></canvas></div>
       </section>
       <section class="panel">
-        <div class="panel-head"><h3>Todas as faturas</h3><span class="muted small">Toque numa fatura para ver os lançamentos acima</span></div>
+        <div class="panel-head"><h3>Todas as faturas</h3><span class="muted small">Toque numa fatura para filtrar a página por ela</span></div>
         <div class="table-wrap">
           <table class="tx bills">
             <thead><tr><th>Vencimento</th><th class="opt">Fechamento</th><th>Situação</th><th class="num opt">Lançamentos</th><th class="num opt">Mínimo</th><th class="num">Total</th></tr></thead>

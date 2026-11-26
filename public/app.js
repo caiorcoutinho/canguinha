@@ -462,21 +462,25 @@ function renderBills() {
   // nome do cartão basta; o banco só entra quando dois cartões têm o mesmo nome
   const dupName = (x) => cards.filter((y) => y.account.name === x.account.name).length > 1;
   $('#card-select').innerHTML = cards.map((x) => `<button data-card="${x.account.id}" class="${x === c ? 'active' : ''}" title="${esc(x.account.name)}${instLabel(x.account) ? ` · ${esc(instLabel(x.account))}` : ''}">${esc(x.account.name)}${dupName(x) && instLabel(x.account) ? ` · ${esc(instLabel(x.account))}` : ''}</button>`).join('');
-  $('#card-select-box').hidden = cards.length < 2;
+  $('#card-select').hidden = cards.length < 2;
 
   const a = c.account;
   const next = [...c.bills].filter((b) => b.status === 'due').sort((x, y) => x.dueDate.localeCompare(y.dueDate))[0];
   const recent = c.bills.slice(0, 6);
   const avg = recent.length ? recent.reduce((s, b) => s + b.total, 0) / recent.length : 0;
   const o = c.open;
-  const total = openTotal(o), posted = o?.total || 0, up = o?.upcomingTotal || 0;
+  if (state.billSel !== 'open' && !selBill(c)) state.billSel = 'open';
+  // fatura escolhida no filtro: a aberta ou uma fechada
+  const sb = state.billSel === 'open' ? null : selBill(c);
+  const total = sb ? sb.total : openTotal(o), posted = sb ? sb.total : o?.total || 0, up = sb ? 0 : o?.upcomingTotal || 0;
   const scale = Math.max(total, avg, 1);
   const used = a.creditLimit ? Math.min(100, (a.balance / a.creditLimit) * 100) : null;
   const closeIn = o?.closeDate ? Math.max(0, daysUntil(o.closeDate)) : null;
   $('#bill-kpis').innerHTML = `
     <div class="panel bh-main">
-      <div class="bh-top"><span class="label">Fatura aberta${cards.length < 2 ? ` · ${esc(a.name)}` : ''}</span>
-        ${o?.closeDate ? `<span class="pill">fecha ${inDays(closeIn)} · ${brDate(o.closeDate).slice(0, 5)}</span>` : ''}</div>
+      <div class="bh-top"><span class="label">${sb ? `Fatura de ${monthLabel(sb.dueDate)}` : 'Fatura aberta'}${cards.length < 2 ? ` · ${esc(a.name)}` : ''}</span>
+        ${sb ? `<span class="status ${billStatus(sb).cls}">${billStatus(sb).text}</span>`
+          : o?.closeDate ? `<span class="pill">fecha ${inDays(closeIn)} · ${brDate(o.closeDate).slice(0, 5)}</span>` : ''}</div>
       <div class="bh-big">${fmt(total)}</div>
       <div class="bh-bar" role="img" aria-label="Lançado ${fmt(posted)}, parcelas que ainda vão cair ${fmt(up)}${avg ? `, média das faturas ${fmt(avg)}` : ''}">
         <span class="seg-posted" style="width:${(posted / scale) * 100}%"></span><span class="seg-up" style="width:${(up / scale) * 100}%"></span>
@@ -487,7 +491,8 @@ function renderBills() {
         ${up ? `<span><i class="sw sw-open"></i>Parcelas que vão cair <strong>${fmt(up)}</strong></span>` : ''}
         ${avg ? `<span><i class="sw sw-mark"></i>Média das faturas <strong>${fmt(avg)}</strong></span>` : ''}
       </div>
-      ${o?.dueDate ? `<p class="muted small" style="margin:8px 0 0">Vence ~${brDate(o.dueDate)} · ${o.txCount || 0} lançamento(s)</p>` : ''}
+      ${sb ? `<p class="muted small" style="margin:8px 0 0">${sb.closeDate ? `Fechou ${brDate(sb.closeDate)} · ` : ''}vence ${brDate(sb.dueDate)} · ${sb.txCount || 0} lançamento(s)${sb.minimum != null ? ` · mínimo ${fmt(sb.minimum)}` : ''}</p>`
+        : o?.dueDate ? `<p class="muted small" style="margin:8px 0 0">Vence ~${brDate(o.dueDate)} · ${o.txCount || 0} lançamento(s)</p>` : ''}
     </div>
     <div class="bh-side">
       <div class="kpi"><div class="label">Próxima a pagar</div>${next
@@ -516,7 +521,9 @@ function renderBills() {
       datasets: [{
         label: 'Fatura', data: rows.map((b) => b.id === 'open' ? openTotal(b) : b.total),
         backgroundColor: rows.map((b) => b.id === 'open' ? stripes(color) : color),
-        borderColor: color, borderWidth: rows.map((b) => b.id === 'open' ? 1.5 : 0),
+        // a fatura do filtro ganha contorno
+        borderColor: rows.map((b) => b.id === state.billSel ? cssVar('--text') : color),
+        borderWidth: rows.map((b) => b.id === state.billSel ? 2 : b.id === 'open' ? 1.5 : 0),
         borderRadius: 4, borderSkipped: 'start', maxBarThickness: 36, categoryPercentage: 0.7,
       }],
     },
@@ -535,22 +542,39 @@ function renderBills() {
       <td class="num opt">${b.minimum != null ? fmt(b.minimum) : '—'}</td>
       <td class="num"><strong>${fmt(b.id === 'open' ? openTotal(b) : b.total)}</strong>${b.id === 'open' ? ' <span class="chip">parcial</span>' : ''}</td></tr>`;
   }).join('');
-  renderGoal(c);
-  renderMonthlyGoal(c);
+  if (sb) { // fatura fechada: meta e gráfico do ciclo dela são desenhados quando os lançamentos chegam
+    $('#goal-title').textContent = 'Meta';
+    $('#goal-body').innerHTML = '<p class="muted">Carregando…</p>';
+  } else {
+    renderGoal(c);
+    renderMonthlyGoal(c);
+  }
   renderCalendar(c);
   loadBillDetail();
 }
 
+const selBill = (c) => state.billSel === 'open' ? c?.open : c?.bills.find((x) => x.id === state.billSel);
+// ciclo da fatura: dia seguinte ao fechamento anterior até o fechamento dela
+function billWindow(c, b) {
+  if (b.id === 'open') return cycleWindow(c);
+  const end = b.closeDate || b.dueDate;
+  const prev = c.bills.map((x) => x.closeDate).filter((d) => d && d < end).sort().at(-1);
+  return { start: prev ? G.isoAddDays(prev, 1) : G.isoAddDays(end, -30), end };
+}
+
+// filtro de fatura vale para a página toda: hero, metas, calendário, histórico e lançamentos
 function selectBill(id) {
   state.billSel = id;
-  $('#bill-pick').value = id;
-  document.querySelectorAll('#bills-body tr').forEach((tr) => tr.classList.toggle('sel', tr.dataset.bill === id));
-  loadBillDetail();
+  const c = calCard(), b = selBill(c);
+  const ym = b && id !== 'open' ? billWindow(c, b).end.slice(0, 7) : null;
+  state.calMonth = ym && ym < todayIso().slice(0, 7) ? ym : null;
+  state.calDay = null;
+  renderBills();
 }
 
 async function loadBillDetail() {
   const c = state.bills.find((x) => x.account.id === state.billCard);
-  const b = state.billSel === 'open' ? c?.open : c?.bills.find((x) => x.id === state.billSel);
+  const b = selBill(c);
   if (!b) { $('#bill-detail').hidden = true; return; }
   $('#bill-detail').hidden = false;
   $('#bill-detail-title').textContent = 'O que tem na fatura';
@@ -602,6 +626,7 @@ async function loadBillDetail() {
   // mantém a categoria aberta se continuar na mesma fatura (ex.: depois de recategorizar)
   if (state.billCatSel?.bill !== key || !cats.some(([k]) => k === state.billCatSel.cat)) state.billCatSel = null;
   renderBillCatChart();
+  if (b.id !== 'open') renderPastCycle(c, b, tx);
 }
 
 const BILL_ROWS = 10;
@@ -775,6 +800,8 @@ async function renderCalendar(c) {
   const weekly = state.goals[id]?.weekly;
   const daily = weekly ? weekly / 7 : null;
   if (!days.includes(state.calDay) || state.calDay > today) state.calDay = null;
+  const sb = state.billSel !== 'open' && selBill(c);
+  const cyc = sb && billWindow(c, sb);
 
   const lead = (parse(first).getDay() + 6) % 7; // segunda = 0
   const head = WEEKDAYS.map((w) => `<div class="cal-h" role="columnheader">${w}</div>`).join('')
@@ -783,7 +810,7 @@ async function renderCalendar(c) {
   const cells = days.map((d) => {
     const v = byDay[d]?.spent || 0, cnt = byDay[d]?.count || 0, future = d > today;
     const lvl = v > 0 && max > 0 ? Math.max(0.12, v / max) : 0;
-    const cls = ['cal-d', future && 'future', d === today && 'today', d === state.calDay && 'sel', daily && v > daily && 'over'].filter(Boolean).join(' ');
+    const cls = ['cal-d', future && 'future', d === today && 'today', d === state.calDay && 'sel', daily && v > daily && 'over', cyc && (d < cyc.start || d > cyc.end) && 'out'].filter(Boolean).join(' ');
     const label = `${brDate(d)}: ${future ? 'dia futuro' : v ? `${fmt(v)} em ${cnt} compra(s)` : 'sem gastos'}`;
     return `<button type="button" role="gridcell" class="${cls}" data-day="${d}" style="--lvl:${(lvl * 100).toFixed(0)}%" aria-label="${label}" aria-pressed="${d === state.calDay}"${future ? ' disabled' : ''}>
       <span class="n">${Number(d.slice(8))}</span>${!future && v ? `<span class="v">${v < 0 ? '−' : ''}${NUM0.format(Math.abs(v))}</span>` : ''}</button>`;
@@ -902,15 +929,18 @@ function renderMonthlyGoal(c) {
       ${m.fallback ? '<p class="muted small">Sem faturas fechadas para estimar o ciclo: usando o mês do calendário.</p>' : '<p class="muted small">Dia e semana já descontam o que você gastou e as parcelas previstas: são o máximo para fechar a fatura dentro da meta. Despesas divididas contam só a sua parte.</p>'}`;
   }
 
-  // gráfico: acumulado diário vs. ritmo linear da meta
+  drawBurn(win, m ? m.tx : spendTx(id).filter((t) => t.date >= win.start && t.date <= win.end), goal, m?.committed || 0);
+}
+
+// gráfico: acumulado diário vs. ritmo linear da meta. Lançamento antes do início (parcela) conta no 1º dia.
+function drawBurn(win, items, goal, base) {
   const total = daysBetween(win.start, win.end) + 1;
   const today = iso(todayLocal());
   const byDay = {};
-  for (const t of (m ? m.tx : spendTx(id).filter((t) => t.date >= win.start && t.date <= win.end))) byDay[t.date] = (byDay[t.date] || 0) + t.net;
+  for (const t of items) { const d = t.date < win.start ? win.start : t.date; byDay[d] = (byDay[d] || 0) + t.net; }
   const days = Array.from({ length: total }, (_, i) => iso(addDays(parse(win.start), i)));
   let acc = 0;
   const cum = days.map((d) => { acc += byDay[d] || 0; return d <= today ? Math.max(0, acc) : null; });
-  const base = m?.committed || 0;
   for (let i = 0; i < cum.length; i++) if (cum[i] != null) cum[i] += base;
   const datasets = [{ label: base ? 'Gasto acumulado + parcelas previstas' : 'Gasto acumulado', data: cum, borderColor: cssVar('--series-2'), backgroundColor: cssVar('--series-2'), borderWidth: 2, pointRadius: 0, pointHoverRadius: 5, tension: 0, spanGaps: false }];
   if (goal) datasets.push({ label: 'Ritmo da meta', data: days.map((_, i) => (goal * (i + 1)) / total), borderColor: cssVar('--text-2'), borderWidth: 2, borderDash: [6, 4], pointRadius: 0, pointHoverRadius: 0 });
@@ -918,6 +948,28 @@ function renderMonthlyGoal(c) {
   opts.plugins.tooltip.callbacks.title = (it) => brDate(days[it[0].dataIndex]);
   opts.scales.x.ticks.maxTicksLimit = 8;
   setChart('chart-mburn', { type: 'line', data: { labels: days.map((d) => d.slice(8) + '/' + d.slice(5, 7)), datasets }, options: opts }, false);
+}
+
+// fatura fechada no filtro: quanto gastou no ciclo dela contra a meta de hoje (por fatura, ou a semanal × semanas do ciclo)
+function renderPastCycle(c, b, tx) {
+  const id = c.account.id, win = billWindow(c, b), g = state.goals[id] || {};
+  const n = daysBetween(win.start, win.end) + 1;
+  const goal = g.monthly || (g.weekly ? (g.weekly * n) / 7 : null);
+  const items = G.spendItems(tx, id);
+  const spent = items.reduce((s, t) => s + t.net, 0);
+  const cycle = `${brDate(win.start).slice(0, 5)} – ${brDate(win.end).slice(0, 5)}`;
+  $('#btn-goal-open').textContent = g.monthly || g.weekly ? 'Editar meta' : 'Definir meta';
+  $('#mburn-title').textContent = `Gasto acumulado no ciclo ${cycle}`;
+  $('#goal-title').textContent = `Meta · fatura de ${monthLabel(b.dueDate)}`;
+  const pct = goal ? (spent / goal) * 100 : 0;
+  $('#goal-body').innerHTML = goal ? `
+      <div class="goal-big">${fmt(spent)} <small>de ${fmt(goal)} no ciclo ${cycle}</small></div>
+      <div class="goal-meter ${pct > 100 ? 'over' : pct >= 80 ? 'warn' : ''}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.min(100, pct).toFixed(0)}"><span style="width:${Math.min(100, pct)}%"></span></div>
+      <div class="goal-status">${spent > goal ? `<span class="ico neg">✕</span> Fechou ${fmt(spent - goal)} acima da meta` : `<span class="ico pos">✓</span> Fechou dentro da meta · sobraram ${fmt(goal - spent)}`}</div>
+      <p class="muted small">Compara com a meta atual${g.monthly ? '' : ` (semanal × ${(n / 7).toFixed(1).replace('.', ',')} semanas)`}. Despesas divididas contam só a sua parte.</p>`
+    : `<div class="goal-big">${fmt(spent)} <small>gastos no ciclo ${cycle}</small></div>
+      <p class="muted small">Sem meta neste cartão para comparar.</p>`;
+  drawBurn(win, items, goal, 0);
 }
 
 // ---------------------------------------------------------------- meta (modal)
