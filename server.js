@@ -13,6 +13,7 @@ import { createAuth } from './lib/auth.js';
 import { startTelegramBot } from './lib/telegram.js';
 import { botCommands } from './lib/bot.js';
 import { createCategorizer } from './lib/categorizer.js';
+import { purchaseKey, stripInstallment, migratePurchaseKeys } from './lib/purchases.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -157,7 +158,7 @@ function normalizeTransaction(t, account) {
     totalInstallments: cc.totalInstallments ?? null,
     purchaseDate,
     // identifica a compra parcelada (igual em todas as parcelas): usado para dividir todas de uma vez
-    purchaseKey: cc.totalInstallments > 1 ? [account.id, purchaseDate || '', cc.totalInstallments, ruleKey(description)].join('|') : null,
+    purchaseKey: cc.totalInstallments > 1 ? purchaseKey(account.id, purchaseDate, cc.totalInstallments, description) : null,
   };
 }
 
@@ -276,8 +277,12 @@ async function billData(acc, refresh) {
   // Pagamento da fatura anterior não abate a fatura aberta (senão ela fica negativa / menor do que é).
   const sum = (list) => list.reduce((s, t) => s + (isCardPayment(t) ? 0 : t.direction === 'out' ? t.amount : -t.amount), 0);
   const openTx = tx.filter((t) => t.bill === 'open');
-  const upcoming = upcomingInstallments(tx, bills);
   const installments = installmentPlan(tx, bills, closeEst, dueEst);
+  // parcelas que ainda vão cair na fatura aberta
+  const upcoming = installments.purchases.filter((p) => p.offset === 0).sort((a, b) => b.amount - a.amount).map((p) => ({
+    description: p.description, category: p.category, purchaseDate: p.purchaseDate, purchaseKey: p.purchaseKey, direction: 'out',
+    sourceId: p.sourceId, installment: `${p.next}/${p.totalInstallments}`, amount: p.amount,
+  }));
   const counts = {};
   for (const t of tx) if (t.bill) counts[t.bill] = (counts[t.bill] || 0) + 1;
   return {
@@ -294,40 +299,16 @@ async function billData(acc, refresh) {
   };
 }
 
-// Parcelas que devem cair na fatura aberta mas ainda não foram lançadas: compras parceladas cuja parcela
-// mais recente está na última fatura fechada e ainda não chegou à última parcela. A Pluggy não tem id da compra,
-// então agrupa por data da compra + nº de parcelas + descrição.
-const stripInstallment = (d) => d.replace(/\s*(parc(ela)?\.?\s*)?\d{1,2}\s*\/\s*\d{1,2}\s*/gi, ' ').replace(/\s+/g, ' ').trim();
-function upcomingInstallments(tx, bills) {
-  const lastClosed = bills.find((b) => b.closeDate)?.id;
-  if (!lastClosed) return [];
-  const latest = new Map();
-  for (const t of tx) {
-    if (!(t.totalInstallments > 1) || !t.installmentNumber || t.direction !== 'out') continue;
-    const key = [t.purchaseDate || '', t.totalInstallments, stripInstallment(t.description).toLowerCase()].join('|');
-    const cur = latest.get(key);
-    if (!cur || t.installmentNumber > cur.installmentNumber) latest.set(key, t);
-  }
-  return [...latest.values()]
-    .filter((t) => t.installmentNumber < t.totalInstallments && t.bill === lastClosed)
-    .map((t) => ({
-      description: stripInstallment(t.description), category: t.category, purchaseDate: t.purchaseDate, purchaseKey: t.purchaseKey, direction: 'out', sourceId: t.id, // parcela lançada que originou a previsão
-      installment: `${t.installmentNumber + 1}/${t.totalInstallments}`, amount: t.amount,
-    }))
-    .sort((a, b) => b.amount - a.amount);
-}
-
-// Todas as parcelas que ainda vão cair (não lançadas), por compra e por fatura. Mesma regra de upcomingInstallments:
-// a parcela seguinte à mais recente cai na fatura aberta (se a mais recente está na última fechada) ou na próxima
+// Todas as parcelas que ainda vão cair (não lançadas), por compra e por fatura. Agrupa as parcelas pela etiqueta da
+// compra (purchaseKey, ver lib/purchases.js) e olha a mais recente de cada uma: a parcela seguinte à mais recente cai na fatura aberta (se a mais recente está na última fechada) ou na próxima
 // (se já está na aberta); as demais, uma por fatura. Valor = o da parcela mais recente.
 function installmentPlan(tx, bills, closeEst, dueEst) {
   const lastClosed = bills.find((b) => b.closeDate)?.id;
   const latest = new Map();
   for (const t of tx) {
     if (!(t.totalInstallments > 1) || !t.installmentNumber || t.direction !== 'out') continue;
-    const key = [t.purchaseDate || '', t.totalInstallments, stripInstallment(t.description).toLowerCase()].join('|');
-    const cur = latest.get(key);
-    if (!cur || t.installmentNumber > cur.installmentNumber) latest.set(key, t);
+    const cur = latest.get(t.purchaseKey);
+    if (!cur || t.installmentNumber > cur.installmentNumber) latest.set(t.purchaseKey, t);
   }
   const purchases = [];
   const byBill = new Map(); // offset (0 = aberta) → total
@@ -338,7 +319,7 @@ function installmentPlan(tx, bills, closeEst, dueEst) {
     if (offset == null) continue; // parcela mais recente em fatura antiga: dado incompleto, não dá para prever
     for (let i = 0; i < left; i++) byBill.set(offset + i, (byBill.get(offset + i) || 0) + t.amount);
     purchases.push({
-      description: stripInstallment(t.description), category: t.category, purchaseDate: t.purchaseDate, purchaseKey: t.purchaseKey,
+      description: stripInstallment(t.description), category: t.category, purchaseDate: t.purchaseDate, purchaseKey: t.purchaseKey, sourceId: t.id, // parcela lançada mais recente
       amount: t.amount, next: t.installmentNumber + 1, totalInstallments: t.totalInstallments, left, remaining: t.amount * left,
       rawDescription: t.description, // com "PARC nn/NN CIDADE BR": o bot limpa igual às parcelas lançadas
       offset, // fatura em que cai a próxima parcela (0 = aberta, 1 = a seguinte...); a parcela next+i cai em offset+i
@@ -890,6 +871,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => server.close(() => store.close().finally(() => process.exit(0))));
+
+// etiquetas antigas das compras parceladas → novas (uma vez só)
+await migratePurchaseKeys(store, (raw, accountId) => normalizeTransaction(raw, { id: accountId }));
 
 setupWebhooks();
 
