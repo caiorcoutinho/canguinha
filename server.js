@@ -16,7 +16,6 @@ import { createCategorizer } from './lib/categorizer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const DATA_DIR = path.join(__dirname, 'data');
 
 const PORT = Number(process.env.PORT || 3000);
 // Dentro de um container, 127.0.0.1 não é alcançável pela porta publicada: escuta em todas as interfaces.
@@ -29,8 +28,7 @@ const DEMO = process.env.DEMO === '1' || !CLIENT_ID || !CLIENT_SECRET;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 // ---------------------------------------------------------------- persistência
-// Postgres se DATABASE_URL estiver definido; senão arquivos JSON em data/.
-const store = await createStore({ databaseUrl: process.env.DATABASE_URL, dataDir: DATA_DIR });
+const store = await createStore({ databaseUrl: process.env.DATABASE_URL });
 
 // ---------------------------------------------------------------- login (Google)
 const auth = await createAuth({
@@ -175,15 +173,13 @@ async function listAccounts(refresh = false) {
       return await cached(`accounts:${itemId}`, async () => {
         const [item, accounts] = await Promise.all([getItem(itemId, refresh), pluggy(`/accounts?itemId=${itemId}`)]);
         const list = accounts.results.map((a) => normalizeAccount(a, item));
-        if (HISTORY) {
-          await store.saveAccounts(accounts.results.map((a, i) => ({ id: a.id, item_id: itemId, kind: list[i].kind, data: list[i], raw: a })))
-            .catch((err) => console.error('[histórico contas]', err.message));
-        }
+        await store.saveAccounts(accounts.results.map((a, i) => ({ id: a.id, item_id: itemId, kind: list[i].kind, data: list[i], raw: a })))
+          .catch((err) => console.error('[histórico contas]', err.message));
         return list;
       }, refresh);
     } catch (err) {
       console.error(`[item ${itemId}]`, err.message);
-      return HISTORY ? store.getAccounts(itemId).catch(() => []) : []; // Pluggy fora: usa o que está salvo
+      return store.getAccounts(itemId).catch(() => []); // Pluggy fora: usa o que está salvo
     }
   }));
   return all.flat();
@@ -398,12 +394,12 @@ async function categorize(list) {
   return list.map(fn);
 }
 
-// Todas as transações (para o saldo com cada pessoa). Com histórico lê do banco; sem, da Pluggy (com cache).
+// Todas as transações (para o saldo com cada pessoa), lidas do banco.
 async function allTransactions() {
   const accounts = await listAccounts(false);
   if (DEMO) return demoTransactions();
   const lists = await Promise.all(accounts.map(async (acc) => {
-    const raw = HISTORY ? await store.getTransactions(acc.id) : await cached(`txall:${acc.id}`, () => fetchAllTransactions(acc.id));
+    const raw = await store.getTransactions(acc.id);
     return raw.map((t) => normalizeTransaction(t, acc));
   }));
   return lists.flat();
@@ -447,9 +443,9 @@ async function billTransactions(accountId, billId, refresh) {
 }
 
 // ---------------------------------------------------------------- histórico (Postgres)
-// Com Postgres, tudo que vem da Pluggy é gravado e as leituras saem do banco: o histórico continua
+// Tudo que vem da Pluggy é gravado e as leituras saem do banco: o histórico continua
 // disponível mesmo depois que a Pluggy deixa de devolvê-lo, e o app funciona com a Pluggy fora do ar.
-const HISTORY = !DEMO && store.hasHistory;
+const HISTORY = !DEMO; // modo demonstração não fala com a Pluggy nem grava histórico
 const SYNC_HOURS = Number(process.env.SYNC_INTERVAL_HOURS || 6);
 
 function txRow(t, acc) {
@@ -475,17 +471,16 @@ async function persistTx(acc, raw, scope) {
   return r;
 }
 
-// Busca na Pluggy (com cache), grava no banco e lê do banco. Sem Postgres, devolve o que veio da Pluggy.
+// Busca na Pluggy (com cache), grava no banco e lê do banco.
 async function synced(key, refresh, fetchFn, persistFn, readFn) {
   try {
-    const fresh = await cached(key, async () => {
+    await cached(key, async () => {
       const v = await fetchFn();
-      if (HISTORY) await Promise.resolve(persistFn(v)).catch((err) => console.error(`[histórico] ${key}:`, err.message));
+      await Promise.resolve(persistFn(v)).catch((err) => console.error(`[histórico] ${key}:`, err.message));
       return v;
     }, refresh);
-    return HISTORY ? await readFn() : fresh;
+    return await readFn();
   } catch (err) {
-    if (!HISTORY) throw err;
     console.error(`[pluggy indisponível] ${key}: ${err.message} — usando histórico salvo`);
     return readFn();
   }
@@ -724,11 +719,11 @@ async function handleApi(req, res, url) {
   }
 
   if (route === 'GET /api/history') {
-    if (!HISTORY) return send(res, 200, { enabled: false, reason: DEMO ? 'demo' : 'sem Postgres (DATABASE_URL)' });
+    if (!HISTORY) return send(res, 200, { enabled: false, reason: 'demo' });
     return send(res, 200, { enabled: true, intervalHours: SYNC_HOURS, syncing: !!syncing, ...(await store.historyStatus()) });
   }
   if (route === 'POST /api/history/sync') {
-    if (!HISTORY) throw new HttpError(400, 'Histórico desativado (modo demonstração ou sem Postgres)');
+    if (!HISTORY) throw new HttpError(400, 'Histórico desativado no modo demonstração');
     return send(res, 200, await syncAll('manual'));
   }
 
@@ -1010,6 +1005,6 @@ if (HISTORY) {
 }
 
 server.listen(PORT, HOST, () => {
-  console.log(`Persistência: ${store.kind}${HISTORY ? ` · histórico ativo, sincroniza a cada ${SYNC_HOURS}h` : ''}`);
+  if (HISTORY) console.log(`Histórico ativo, sincroniza a cada ${SYNC_HOURS}h`);
   console.log(`Canguinha rodando em http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}${IN_CONTAINER ? ' (container: escutando em ' + HOST + ')' : ''}${DEMO ? '  (modo demonstração — sem credenciais Pluggy)' : ''}`);
 });

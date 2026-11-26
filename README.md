@@ -14,10 +14,8 @@ Abra <http://localhost:3010> (mude com `APP_PORT` no `.env`). Sobe três serviç
 
 - **nginx**: proxy reverso (config em `nginx/default.conf`), único serviço com porta publicada
 - **app**: o Canguinha (Node 22 Alpine), acessível só pela rede interna do compose
-- **db**: Postgres 17. Guarda as conexões adicionadas pela tela e as metas. Os dados ficam no volume `canguinha_pgdata`
-  e sobrevivem a `docker compose down` (só somem com `down -v`).
-
-Na primeira subida, se o banco estiver vazio, o app importa `data/items.json` e `data/goals.json` (montados só para leitura).
+- **db**: Postgres 17. Guarda tudo: conexões, metas, categorias, pessoas e o histórico. Os dados ficam no volume
+  `canguinha_pgdata` e sobrevivem a `docker compose down` (só somem com `down -v`).
 
 Comandos úteis:
 
@@ -136,7 +134,7 @@ token, o log mostra `409 Conflict`).
 
 ## Rodar sem Docker
 
-Requer Node 22+. Sem `DATABASE_URL`, os dados ficam em arquivos JSON em `data/`.
+Requer Node 22+ e um Postgres: defina `DATABASE_URL` no `.env` (sem ela o app não sobe).
 
 ```bash
 cp .env.example .env   # preencha as credenciais
@@ -159,7 +157,7 @@ Se a porta 3000 não estiver publicada, use uma que esteja: `PORT=8080 npm start
 2. Em <https://meu.pluggy.ai> conecte seus bancos e cartões.
 3. No dashboard da Pluggy, conecte o conector **MeuPluggy** à sua aplicação. Isso cria um *item*; copie o ID dele.
 4. Coloque o ID em `PLUGGY_ITEM_IDS` no `.env` (vários separados por vírgula) **ou** adicione pela tela em **Conexões**
-   (fica salvo em `data/items.json`).
+   (fica salvo no banco).
 
 ## Funcionalidades
 
@@ -173,7 +171,7 @@ Se a porta 3000 não estiver publicada, use uma que esteja: `PORT=8080 npm start
   os lançamentos futuros; a descrição é comparada sem datas, horários, parcelas e números longos
   (`PIX - ENVIADO 04/11 09:48 FULANO` → `pix - enviado fulano`). Prioridade: escolha manual > regra > Pluggy.
   O dado original da Pluggy nunca é alterado; excluir uma categoria devolve os lançamentos à categoria da Pluggy.
-  Ficam no Postgres (`categories`, `tx_categories`, `category_rules`) ou em `data/categories.json` sem banco.
+  Ficam no Postgres (`categories`, `tx_categories`, `category_rules`).
 - **Despesas de outras pessoas** (botão **Pessoas**): em qualquer despesa, **+ dividir** registra quanto é de outra
   pessoa: toda dela, metade ou valores livres, com uma ou várias pessoas. Numa compra parcelada a divisão vale para todas
   as parcelas, proporcional ao valor de cada uma, inclusive as que ainda vão cair. Metas e totais contam só a sua parte
@@ -184,7 +182,7 @@ Se a porta 3000 não estiver publicada, use uma que esteja: `PORT=8080 npm start
 - **Faturas** (aba própria, ou `/#faturas`): fatura aberta parcial com fechamento e vencimento estimados, próxima a pagar,
   média das últimas, histórico mensal, lista de faturas e os lançamentos/categorias de cada uma
 - **Meta semanal por cartão** (aba Faturas): gasto da semana (seg–dom) vs. meta, quanto ainda pode gastar por dia,
-  histórico das últimas 8 semanas, e a fatura aberta comparada à meta proporcional ao ciclo. Fica em `data/goals.json`.
+  histórico das últimas 8 semanas, e a fatura aberta comparada à meta proporcional ao ciclo. Fica na tabela `goals`.
   Pagamentos da fatura não contam; estornos abatem.
 - **Meta mensal por cartão**, medida pelo ciclo da fatura (dia seguinte ao último fechamento até o próximo, estimado):
   quanto ainda pode gastar por dia, por semana e até domingo para fechar dentro da meta, projeção no ritmo atual e

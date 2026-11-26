@@ -12,8 +12,6 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:-canguinha}
     expose:
       - "3000"                         # só na rede interna; o acesso de fora é pelo nginx
-    volumes:
-      - ./data:/app/data:ro            # só lido na 1ª subida, para importar metas/conexões dos JSON antigos
     depends_on:
       db:
         condition: service_healthy
