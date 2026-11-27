@@ -260,12 +260,13 @@ async function billData(acc, refresh) {
   const hasLinks = tx.some((t) => t.billId && ids.has(t.billId));
   const windows = [...bills].filter((b) => b.closeDate).sort((a, b) => a.closeDate.localeCompare(b.closeDate));
   const lastClose = windows.at(-1)?.closeDate ?? null;
-  const byWindow = (t) => (lastClose && t.date <= lastClose) ? (windows.find((b) => t.date <= b.closeDate)?.id ?? null) : 'open';
+  // billId que /bills não traz e compra depois do penúltimo fechamento: é a fatura aberta (o banco já etiqueta compras dela,
+  // até as feitas antes do fechamento que só entraram depois). Mais antiga que isso: fatura que saiu do histórico, fica de fora.
+  const prevClose = windows.at(-2)?.closeDate ?? '';
   for (const t of tx) {
     // Sem billId = ainda não faturada → fatura aberta (mesmo com data no dia do fechamento).
-    // billId de uma fatura que /bills ainda não trouxe (a recém-fechada demora a aparecer): usa a janela, senão a compra some de todas.
-    if (hasLinks) t.bill = !t.billId ? 'open' : ids.has(t.billId) ? t.billId : byWindow(t);
-    else t.bill = byWindow(t);
+    if (hasLinks) t.bill = !t.billId || (!ids.has(t.billId) && t.date > prevClose) ? 'open' : ids.has(t.billId) ? t.billId : null;
+    else t.bill = (lastClose && t.date <= lastClose) ? (windows.find((b) => t.date <= b.closeDate)?.id ?? null) : 'open';
   }
 
   const today = todayIso();
