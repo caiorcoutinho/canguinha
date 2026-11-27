@@ -297,6 +297,8 @@ async function billData(acc, refresh) {
       open: {
         id: 'open', closeDate: closeEst, dueDate: dueEst, total: sum(openTx), txCount: openTx.length, estimated: true, status: 'open',
         upcoming, upcomingTotal: upcoming.reduce((s, u) => s + u.amount, 0),
+        // compras da aberta com data até o último fechamento (entraram depois dele): a meta mensal, que olha a data, conta pelo id
+        late: lastClose ? openTx.filter((t) => t.date <= lastClose).map((t) => t.id) : [],
       },
       installments,
     },

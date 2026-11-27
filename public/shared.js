@@ -61,7 +61,7 @@ export const isCardPayment = (t) => t.direction === 'in'
 export function spendItems(tx, accountId) {
   return tx
     .filter((t) => t.accountId === accountId && !isCardPayment(t))
-    .map((t) => ({ date: t.date, net: t.direction === 'out' ? (t.myAmount ?? t.amount) : -t.amount, out: t.direction === 'out' }));
+    .map((t) => ({ id: t.id, date: t.date, net: t.direction === 'out' ? (t.myAmount ?? t.amount) : -t.amount, out: t.direction === 'out' }));
 }
 
 // Gasto por semana (seg–dom) nas últimas WEEKS semanas; a última é a atual.
@@ -128,7 +128,8 @@ export function monthStatus(card, goal, items, today) {
   const total = daysBetween(win.start, win.end) + 1;
   const elapsed = Math.min(total, Math.max(1, daysBetween(win.start, today) + 1)); // inclui hoje
   const daysLeft = Math.max(1, daysBetween(today, win.end) + 1);                    // inclui hoje
-  const tx = items.filter((t) => t.date >= win.start && t.date <= win.end);
+  const late = new Set(win.fallback ? [] : card.open?.late || []); // da fatura aberta, mas com data antes do ciclo
+  const tx = items.filter((t) => (t.date >= win.start && t.date <= win.end) || late.has(t.id));
   const posted = Math.max(0, tx.reduce((s, t) => s + t.net, 0));
   const upcoming = win.fallback ? [] : (card.open?.upcoming || []);
   const committed = upcoming.reduce((s, u) => s + (u.myAmount ?? u.amount), 0); // parcelas que ainda vão cair neste ciclo (só a sua parte)

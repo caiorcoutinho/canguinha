@@ -121,3 +121,9 @@ test('ritmo semanal: segunda-feira com parcelas da semana inteira', () => {
   close(w.avgDaily, 50);                       // antes: 350/dia, contra 100/dia da meta
   assert.equal(w.ahead, false);
 });
+
+test('meta mensal: compra da fatura aberta com data antes do fechamento conta no ciclo', () => {
+  const c = { bills: [{ closeDate: '2026-11-05' }], open: { closeDate: '2026-12-05', upcoming: [], late: ['a'] } };
+  const items = [{ id: 'a', date: '2026-11-04', net: 80 }, { id: 'b', date: '2026-11-04', net: 50 }];
+  close(monthStatus(c, 3000, items, TODAY).posted, 80);
+});
