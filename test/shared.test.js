@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { addMonths, monthlyOnOrAfter, weekStatus, monthStatus, todayAllowance, isCardPayment, ruleKey } from '../public/shared.js';
+import { addMonths, billResolver, monthlyOnOrAfter, weekStatus, monthStatus, todayAllowance, isCardPayment, ruleKey } from '../public/shared.js';
 
 test('addMonths limita ao último dia do mês', () => {
   assert.equal(addMonths('2026-01-31', 1), '2026-02-28');
@@ -122,8 +122,23 @@ test('ritmo semanal: segunda-feira com parcelas da semana inteira', () => {
   assert.equal(w.ahead, false);
 });
 
-test('meta mensal: compra da fatura aberta com data antes do fechamento conta no ciclo', () => {
-  const c = { bills: [{ closeDate: '2026-11-05' }], open: { closeDate: '2026-12-05', upcoming: [], late: ['a'] } };
-  const items = [{ id: 'a', date: '2026-11-04', net: 80 }, { id: 'b', date: '2026-11-04', net: 50 }];
-  close(monthStatus(c, 3000, items, TODAY).posted, 80);
+test('meta mensal: compra da fatura aberta com data antes do fechamento abre o ciclo e conta nele', () => {
+  const c = { bills: [{ closeDate: '2026-11-05' }], open: { closeDate: '2026-12-05', upcoming: [], late: ['a'], firstDate: '2026-11-04' } };
+  const items = [{ id: 'a', date: '2026-11-04', net: 80 }, { id: 'b', date: '2026-11-04', net: 50 }, { id: 'c', date: '2026-11-05', net: 20 }];
+  const m = monthStatus(c, 3000, items, TODAY);
+  assert.equal(m.start, '2026-11-04'); // 'b' e 'c' são da fatura fechada: ficam de fora
+  close(m.posted, 80);
+  assert.equal(m.total, 32);
+});
+
+test('billResolver: billId conhecido, ausente, desconhecido recente e antigo; sem vínculo, pela janela', () => {
+  const bills = [{ id: 'set', closeDate: '2026-09-26' }, { id: 'out', closeDate: '2026-10-26' }, { id: 'nov', closeDate: '2026-11-26' }];
+  const of = billResolver(bills, true);
+  assert.equal(of({ billId: 'nov', date: '2026-11-20' }), 'nov');
+  assert.equal(of({ billId: null, date: '2026-11-20' }), 'open');
+  assert.equal(of({ billId: 'x', date: '2026-11-25' }), 'open'); // depois do penúltimo fechamento (26/10)
+  assert.equal(of({ billId: 'x', date: '2026-10-20' }), null);    // fatura que saiu do histórico
+  const byDate = billResolver(bills, false);
+  assert.equal(byDate({ date: '2026-11-26' }), 'nov');
+  assert.equal(byDate({ date: '2026-11-27' }), 'open');
 });

@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import { isCardPayment, monthlyOnOrAfter, ruleKey } from './public/shared.js';
+import { billResolver, isCardPayment, monthlyOnOrAfter, ruleKey } from './public/shared.js';
 import { demoAccounts, demoTransactions, demoBills } from './lib/demo.js';
 import { createStore, DuplicateError } from './lib/store.js';
 import { createAuth } from './lib/auth.js';
@@ -257,17 +257,10 @@ async function billData(acc, refresh) {
   }
   bills.sort((a, b) => b.dueDate.localeCompare(a.dueDate));
   const ids = new Set(bills.map((b) => b.id));
-  const hasLinks = tx.some((t) => t.billId && ids.has(t.billId));
-  const windows = [...bills].filter((b) => b.closeDate).sort((a, b) => a.closeDate.localeCompare(b.closeDate));
-  const lastClose = windows.at(-1)?.closeDate ?? null;
-  // billId que /bills não traz e compra depois do penúltimo fechamento: é a fatura aberta (o banco já etiqueta compras dela,
-  // até as feitas antes do fechamento que só entraram depois). Mais antiga que isso: fatura que saiu do histórico, fica de fora.
-  const prevClose = windows.at(-2)?.closeDate ?? '';
-  for (const t of tx) {
-    // Sem billId = ainda não faturada → fatura aberta (mesmo com data no dia do fechamento).
-    if (hasLinks) t.bill = !t.billId || (!ids.has(t.billId) && t.date > prevClose) ? 'open' : ids.has(t.billId) ? t.billId : null;
-    else t.bill = (lastClose && t.date <= lastClose) ? (windows.find((b) => t.date <= b.closeDate)?.id ?? null) : 'open';
-  }
+  const linked = tx.some((t) => t.billId && ids.has(t.billId));
+  const lastClose = bills.map((b) => b.closeDate).filter(Boolean).sort().at(-1) ?? null;
+  const billOf = billResolver(bills, linked);
+  for (const t of tx) t.bill = billOf(t);
 
   const today = todayIso();
   const last = bills[0];
@@ -293,12 +286,14 @@ async function billData(acc, refresh) {
     tx,
     summary: {
       account: acc,
+      linked, // o bot recalcula faturas de dias passados com billResolver: precisa do mesmo vínculo
       bills: bills.map((b) => ({ ...b, txCount: counts[b.id] || 0, status: b.dueDate < today ? 'past' : 'due' })),
       open: {
         id: 'open', closeDate: closeEst, dueDate: dueEst, total: sum(openTx), txCount: openTx.length, estimated: true, status: 'open',
         upcoming, upcomingTotal: upcoming.reduce((s, u) => s + u.amount, 0),
         // compras da aberta com data até o último fechamento (entraram depois dele): a meta mensal, que olha a data, conta pelo id
         late: lastClose ? openTx.filter((t) => t.date <= lastClose).map((t) => t.id) : [],
+        firstDate: openTx.filter((t) => t.direction === 'out').map((t) => t.date).sort()[0] ?? null, // o ciclo começa aqui se for antes do fechamento
       },
       installments,
     },

@@ -112,14 +112,37 @@ export function weekStatus(items, goal, today, card) {
   };
 }
 
-// Ciclo atual = dia seguinte ao último fechamento até o fechamento estimado da fatura aberta.
-// `card` = { bills: [{ closeDate }], open: { closeDate } } (formato de /api/bills).
+// Fatura de cada lançamento: id da fatura, 'open' (aberta) ou null (fatura que saiu do histórico). Servidor e bot usam esta.
+// `linked`: o banco informa billId (vem do servidor, calculado com o histórico inteiro). Sem billId = ainda não faturada → aberta.
+// billId que as faturas não trazem e data depois do penúltimo fechamento: é a aberta (o banco já etiqueta compras dela, até as
+// feitas antes do fechamento que só entraram depois). Mais antiga que isso: fatura que saiu do histórico, fica de fora.
+// Sem vínculo: pela janela de fechamento.
+export function billResolver(bills, linked) {
+  const ids = new Set(bills.map((b) => b.id));
+  const windows = bills.filter((b) => b.closeDate).sort((a, b) => a.closeDate.localeCompare(b.closeDate));
+  const lastClose = windows.at(-1)?.closeDate ?? null, prevClose = windows.at(-2)?.closeDate ?? '';
+  if (linked) return (t) => (!t.billId || (!ids.has(t.billId) && t.date > prevClose) ? 'open' : ids.has(t.billId) ? t.billId : null);
+  return (t) => (lastClose && t.date <= lastClose ? (windows.find((b) => t.date <= b.closeDate)?.id ?? null) : 'open');
+}
+
+// Ciclo atual = dia seguinte ao último fechamento (ou o dia da primeira despesa da fatura aberta, se for antes: compra
+// que entrou depois do fechamento) até o fechamento estimado da fatura aberta.
+// `card` = { bills: [{ closeDate }], open: { closeDate, firstDate } } (formato de /api/bills).
 export function cycleWindow(card, today) {
   const lastClose = card.bills.map((b) => b.closeDate).filter(Boolean).sort().at(-1);
-  if (lastClose && card.open?.closeDate) return { start: isoAddDays(lastClose, 1), end: card.open.closeDate, estimated: true };
+  if (lastClose && card.open?.closeDate) {
+    const after = isoAddDays(lastClose, 1), first = card.open.firstDate;
+    return { start: first && first < after ? first : after, end: card.open.closeDate, lastClose, estimated: true };
+  }
   const first = `${today.slice(0, 7)}-01`;
   const nextMonth = isoAddDays(first, 32).slice(0, 7);
   return { start: first, end: isoAddDays(`${nextMonth}-01`, -1), fallback: true };
+}
+
+// Lançamentos do ciclo: entre as datas dele, menos os de antes do fechamento que ficaram na fatura fechada.
+export function cycleItems(card, win, items) {
+  const late = new Set(win.fallback ? [] : card.open?.late || []); // da fatura aberta, com data até o fechamento
+  return items.filter((t) => t.date >= win.start && t.date <= win.end && (!win.lastClose || t.date > win.lastClose || late.has(t.id)));
 }
 
 export function monthStatus(card, goal, items, today) {
@@ -128,8 +151,7 @@ export function monthStatus(card, goal, items, today) {
   const total = daysBetween(win.start, win.end) + 1;
   const elapsed = Math.min(total, Math.max(1, daysBetween(win.start, today) + 1)); // inclui hoje
   const daysLeft = Math.max(1, daysBetween(today, win.end) + 1);                    // inclui hoje
-  const late = new Set(win.fallback ? [] : card.open?.late || []); // da fatura aberta, mas com data antes do ciclo
-  const tx = items.filter((t) => (t.date >= win.start && t.date <= win.end) || late.has(t.id));
+  const tx = cycleItems(card, win, items);
   const posted = Math.max(0, tx.reduce((s, t) => s + t.net, 0));
   const upcoming = win.fallback ? [] : (card.open?.upcoming || []);
   const committed = upcoming.reduce((s, u) => s + (u.myAmount ?? u.amount), 0); // parcelas que ainda vão cair neste ciclo (só a sua parte)

@@ -923,7 +923,7 @@ function renderMonthlyGoal(c) {
       ${m.fallback ? '<p class="muted small">Sem faturas fechadas para estimar o ciclo: usando o mês do calendário.</p>' : '<p class="muted small">Dia e semana já descontam o que você gastou e as parcelas previstas: são o máximo para fechar a fatura dentro da meta. Despesas divididas contam só a sua parte.</p>'}`;
   }
 
-  drawBurn(win, m ? m.tx : spendTx(id).filter((t) => t.date >= win.start && t.date <= win.end), goal, m?.committed || 0);
+  drawBurn(win, m ? m.tx : G.cycleItems(c, win, spendTx(id)), goal, m?.committed || 0);
 }
 
 // gráfico: acumulado diário vs. ritmo linear da meta. Lançamento antes do início (parcela) conta no 1º dia.
